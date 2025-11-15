@@ -99,6 +99,15 @@ var config = {
     server: {
         port: parseInt(process.env.PORT || '3000'),
         host: process.env.HOST || 'localhost'
+    },
+
+    // Code Validation Configuration
+    codeValidation: {
+        enabled: process.env.ENABLE_CODE_VALIDATION !== 'false' &&
+                 (configJson.codeValidation === undefined || configJson.codeValidation.enabled !== false),
+        cljKondoPath: process.env.CLJ_KONDO_PATH ||
+                     (configJson.codeValidation && configJson.codeValidation.cljKondoPath) ||
+                     'clj-kondo'
     }
 };
 

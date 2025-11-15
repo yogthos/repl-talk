@@ -5,7 +5,7 @@
     "main": "src/app.js",
     "scripts": {
       "start": "node src/app.js",
-      "test": "node --test test/repl-loop.test.js test/db-history.test.js"
+      "test": "node --test test/repl-loop.test.js test/db-history.test.js test/html-extraction.test.js"
     },
     "keywords": [
       "Clojure",

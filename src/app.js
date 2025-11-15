@@ -17,6 +17,7 @@ var nreplClient = require('./nrepl-client');
 var aiClient = require('./ai-client');
 var resultHandler = require('./result-handler');
 var db = require('./db');
+var codeValidator = require('./code-validator');
 
 // Application state
 var appState = {
@@ -95,6 +96,7 @@ function initialize(callback) {
 
 /**
  * Eval callback for AI client - executes Clojure code via nREPL
+ * Validates code with clj-kondo before execution if validation is enabled
  */
 function evalClojure(codeString, callback) {
     if (!appState.nreplConnection || !appState.nreplSession) {
@@ -103,23 +105,71 @@ function evalClojure(codeString, callback) {
 
     console.log('Evaluating Clojure code:', codeString);
 
-    appState.nreplConnection.eval(codeString, undefined, appState.nreplSession, function(err, messages) {
-        if (err) {
-            console.error('nREPL eval error:', err);
-            return callback(err, null);
-        }
+    // Validate code before execution if validation is enabled
+    if (config.codeValidation.enabled) {
+        codeValidator.validateCode(codeString, config.codeValidation.cljKondoPath, function(validateErr, validateResult) {
+            if (validateErr) {
+                // Validation process failed (e.g., clj-kondo not found)
+                // Log warning but continue with execution (graceful degradation)
+                console.warn('Code validation failed:', validateErr.message);
+                console.warn('Proceeding with execution without validation');
+                executeCode();
+            } else if (!validateResult.valid) {
+                // Validation found errors - return them in structured format
+                console.log('Code validation found errors:', validateResult.errors);
 
-        // Serialize result
-        var result = resultHandler.serializeResult(messages);
-        var formatted = resultHandler.formatForVisualization(result);
+                // Format validation errors similar to execution errors
+                var errorMessages = validateResult.errors.map(function(err) {
+                    return 'Line ' + err.row + ', Col ' + err.col + ': ' + err.message + ' (' + err.level + ')';
+                }).join('\n');
 
-        console.log('Evaluation result:', formatted);
+                var validationError = {
+                    type: 'error',
+                    error: 'Code validation failed:\n' + errorMessages,
+                    validationErrors: validateResult.errors,
+                    errorDetails: {
+                        message: 'Code validation detected errors before execution. Please fix the following issues:',
+                        validationErrors: validateResult.errors,
+                        hint: 'Review the validation errors and correct the code syntax, types, or structure.'
+                    }
+                };
 
-        // Do NOT broadcast tool results to canvas - only final AI responses should be displayed
-        // Tool results are passed to AI client callback for processing into final HTML response
+                var formatted = resultHandler.formatForVisualization(validationError);
+                callback(null, formatted);
+            } else {
+                // Validation passed (or was skipped) - proceed with execution
+                if (validateResult.skipped) {
+                    console.log('Code validation skipped:', validateResult.reason);
+                } else {
+                    console.log('Code validation passed');
+                }
+                executeCode();
+            }
+        });
+    } else {
+        // Validation disabled - proceed directly to execution
+        executeCode();
+    }
 
-        callback(null, formatted);
-    });
+    function executeCode() {
+        appState.nreplConnection.eval(codeString, undefined, appState.nreplSession, function(err, messages) {
+            if (err) {
+                console.error('nREPL eval error:', err);
+                return callback(err, null);
+            }
+
+            // Serialize result
+            var result = resultHandler.serializeResult(messages);
+            var formatted = resultHandler.formatForVisualization(result);
+
+            console.log('Evaluation result:', formatted);
+
+            // Do NOT broadcast tool results to canvas - only final AI responses should be displayed
+            // Tool results are passed to AI client callback for processing into final HTML response
+
+            callback(null, formatted);
+        });
+    }
 }
 
 /**
@@ -203,6 +253,14 @@ function handleUserMessage(userMessage, modelType, ws) {
             db.addMessage(sessionId, role, content, toolCalls);
         };
 
+        // Create status callback to send status updates to user
+        var statusCallback = function(statusMessage) {
+            sendToClient(ws, {
+                type: 'status',
+                message: statusMessage
+            });
+        };
+
         // Create wrapped eval callback that requests user approval
         var evalCallbackWithApproval = function(code, callback) {
             // Generate unique message ID for this code execution
@@ -225,8 +283,8 @@ function handleUserMessage(userMessage, modelType, ws) {
             // The callback will be called when user approves/rejects
         };
 
-        // Create AI client with loaded history and save callback
-        client = aiClient.createAIClient(config, evalCallbackWithApproval, history, saveCallback);
+        // Create AI client with loaded history, save callback, and status callback
+        client = aiClient.createAIClient(config, evalCallbackWithApproval, history, saveCallback, statusCallback);
         appState.aiClients[sessionId] = client;
     }
 
@@ -245,9 +303,13 @@ function handleUserMessage(userMessage, modelType, ws) {
             return;
         }
 
-        if (response && response.content) {
+        // IMPORTANT: This callback only fires for FINAL responses (not intermediate tool calls)
+        // The ai-client already filters out intermediate messages with tool_calls
+
+        if (response) {
             // If response contains HTML, send it to canvas for visualization
             if (response.type === 'html' && response.html) {
+                console.log('Sending HTML result to canvas, length:', response.html.length);
                 sendToClient(ws, {
                     type: 'result',
                     data: {
@@ -256,9 +318,15 @@ function handleUserMessage(userMessage, modelType, ws) {
                         content: response.content
                     }
                 });
-            } else {
+            } else if (response.content) {
                 // Regular text response goes to chat
+                // Note: With the updated system prompt, final responses should be HTML
+                // This path is mainly for error cases or non-HTML responses
+                console.log('Sending text response to chat');
                 sendToClient(ws, { type: 'ai_response', content: response.content });
+            } else {
+                // Edge case: empty response
+                console.log('Received empty response from AI client');
             }
         }
     });

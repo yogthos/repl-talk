@@ -39,14 +39,89 @@ function createEvalClojureTool(config) {
  * @param {Function} evalCallback - Callback for executing Clojure code
  * @param {Array} initialHistory - Optional initial conversation history
  * @param {Function} saveCallback - Optional callback to save messages (sessionId, role, content, toolCalls)
+ * @param {Function} statusCallback - Optional callback to send status updates to user (message)
  */
-function createAIClient(config, evalCallback, initialHistory, saveCallback) {
+function createAIClient(config, evalCallback, initialHistory, saveCallback, statusCallback) {
     var client = {
         config: config,
         evalCallback: evalCallback,
-        conversationHistory: initialHistory || [],
-        saveCallback: saveCallback || null
+        conversationHistory: [],
+        saveCallback: saveCallback || null,
+        statusCallback: statusCallback || null,
+        // Error recovery state
+        inErrorRecovery: false,
+        iterationCount: 0,
+        maxIterations: 5 // Safety limit to prevent infinite loops
     };
+
+    /**
+     * Sanitize conversation history to ensure valid message sequence
+     * Removes orphaned tool messages (tool messages without preceding assistant message with tool_calls)
+     * Ensures proper message sequence: user/assistant → assistant with tool_calls → tool → assistant
+     */
+    function sanitizeHistory(history) {
+        if (!history || history.length === 0) {
+            return [];
+        }
+
+        var sanitized = [];
+        var i = 0;
+
+        while (i < history.length) {
+            var msg = history[i];
+
+            // Always include user and assistant messages (without tool_calls)
+            if (msg.role === 'user' || (msg.role === 'assistant' && !msg.tool_calls)) {
+                sanitized.push(msg);
+                i++;
+            }
+            // For assistant messages with tool_calls, include them and their corresponding tool messages
+            else if (msg.role === 'assistant' && msg.tool_calls && msg.tool_calls.length > 0) {
+                sanitized.push(msg);
+                i++;
+
+                // Collect all tool messages that correspond to this assistant's tool_calls
+                var toolCallIds = {};
+                msg.tool_calls.forEach(function(toolCall) {
+                    toolCallIds[toolCall.id] = true;
+                });
+
+                // Include tool messages that match the tool_call_ids from the assistant message
+                while (i < history.length && history[i].role === 'tool') {
+                    var toolMsg = history[i];
+                    if (toolMsg.tool_call_id && toolCallIds[toolMsg.tool_call_id]) {
+                        sanitized.push(toolMsg);
+                        i++;
+                    } else {
+                        // Orphaned tool message - skip it
+                        console.warn('Removing orphaned tool message with tool_call_id:', toolMsg.tool_call_id);
+                        i++;
+                    }
+                }
+            }
+            // Skip orphaned tool messages (not preceded by assistant with tool_calls)
+            else if (msg.role === 'tool') {
+                console.warn('Removing orphaned tool message with tool_call_id:', msg.tool_call_id);
+                i++;
+            }
+            // Skip any other unexpected message types
+            else {
+                console.warn('Skipping unexpected message type:', msg.role);
+                i++;
+            }
+        }
+
+        return sanitized;
+    }
+
+    // Sanitize initial history to remove orphaned tool messages
+    if (initialHistory && initialHistory.length > 0) {
+        var sanitizedHistory = sanitizeHistory(initialHistory);
+        if (sanitizedHistory.length !== initialHistory.length) {
+            console.log('Sanitized conversation history: removed', initialHistory.length - sanitizedHistory.length, 'orphaned messages');
+        }
+        client.conversationHistory = sanitizedHistory;
+    }
 
     /**
      * Get the appropriate endpoint and API key based on model type
@@ -154,11 +229,18 @@ function createAIClient(config, evalCallback, initialHistory, saveCallback) {
 
                     if (result && result.type === 'error') {
                         // Format error result with clear instructions for AI
+                        // Check if this is a validation error vs execution error
+                        var isValidationError = result.validationErrors && result.validationErrors.length > 0;
+                        var errorMessage = isValidationError
+                            ? 'Code validation detected errors before execution. Please fix the validation errors and generate corrected code using eval_clojure again.'
+                            : 'The code execution failed with an error. Please analyze the error and generate corrected code using eval_clojure again.';
+
                         var errorResponse = {
                             status: 'error',
                             error: result.error,
-                            message: 'The code execution failed with an error. Please analyze the error and generate corrected code using eval_clojure again.',
+                            message: errorMessage,
                             errorDetails: result.errorDetails || {},
+                            validationErrors: result.validationErrors || null,
                             stdout: result.stdout || null,
                             raw: result.raw || null
                         };
@@ -187,34 +269,80 @@ function createAIClient(config, evalCallback, initialHistory, saveCallback) {
     /**
      * Extract HTML from mixed text/HTML content
      * Looks for HTML document or HTML tags within text
+     * Strips commentary text and tool call markers
      */
     function extractHTML(content) {
         if (!content || typeof content !== 'string') {
             return null;
         }
 
-        // Check if content starts with HTML already
         var trimmed = content.trim();
+
+        // Remove tool call markers if present (these shouldn't appear but handle them)
+        // Pattern: <｜tool▁calls▁begin｜>, <｜tool▁call▁begin｜>, <｜tool▁sep｜>, etc.
+        trimmed = trimmed.replace(/<[｜|][^>]*?[｜|]>/g, '');
+
+        // Remove common patterns that might slip through
+        trimmed = trimmed.replace(/[｜▁]/g, '');
+
+        // Check if content starts with HTML already (no commentary)
         if (trimmed.startsWith('<!DOCTYPE') || trimmed.startsWith('<html')) {
-            return content;
+            return trimmed;
         }
 
-        // Look for HTML document within the content
-        var doctypeMatch = content.match(/(<!DOCTYPE[\s\S]*)/i);
+        // Try to find and extract HTML from mixed content
+        // Strategy: Look for first HTML tag and extract everything from there
+
+        // 1. Look for DOCTYPE declaration and extract everything from there
+        var doctypeMatch = trimmed.match(/<!DOCTYPE[\s\S]*/i);
         if (doctypeMatch) {
-            return doctypeMatch[1];
+            return doctypeMatch[0].trim();
         }
 
-        // Look for <html> tag within the content
-        var htmlMatch = content.match(/(<html[\s\S]*)/i);
+        // 2. Look for <html> tag and extract everything from there
+        var htmlMatch = trimmed.match(/<html[\s\S]*/i);
         if (htmlMatch) {
-            return htmlMatch[1];
+            return htmlMatch[0].trim();
         }
 
-        // Look for substantial HTML structure (div/body/etc with content)
-        var structureMatch = content.match(/(<(?:div|body|section|article|main)[^>]*>[\s\S]*)/i);
+        // 3. Look for substantial HTML structure and extract from first tag to end
+        // This handles cases where commentary appears before the HTML
+        var structureMatch = trimmed.match(/(<(?:div|body|section|article|main|table|ul|ol|h[1-6]|p)[^>]*>[\s\S]*)/i);
         if (structureMatch) {
-            return structureMatch[1];
+            var htmlContent = structureMatch[1].trim();
+
+            // Try to find the matching closing tag and extract just that portion
+            // This removes any trailing commentary
+            var firstTag = htmlContent.match(/^<(\w+)/);
+            if (firstTag) {
+                var tagName = firstTag[1];
+                // Find the last occurrence of the closing tag for this element
+                var closingTagPattern = new RegExp('</' + tagName + '>(?!.*</' + tagName + '>)', 'i');
+                var closingMatch = htmlContent.match(closingTagPattern);
+                if (closingMatch) {
+                    var endIndex = closingMatch.index + closingMatch[0].length;
+                    return htmlContent.substring(0, endIndex).trim();
+                }
+            }
+
+            return htmlContent;
+        }
+
+        // 4. Look for any HTML tags and try to extract clean HTML
+        // Find first HTML tag
+        var firstTagMatch = trimmed.match(/<[a-z][a-z0-9]*[\s\S]*?>/i);
+        if (firstTagMatch) {
+            var startIndex = firstTagMatch.index;
+            // Extract from first tag to end, then try to find last closing tag
+            var potentialHtml = trimmed.substring(startIndex);
+
+            // Find the last closing HTML tag to trim trailing text
+            var lastClosingTag = potentialHtml.match(/.*(<\/[a-z][a-z0-9]*>)/i);
+            if (lastClosingTag) {
+                return potentialHtml.substring(0, lastClosingTag.index + lastClosingTag[1].length).trim();
+            }
+
+            return potentialHtml.trim();
         }
 
         // If no HTML found, return null
@@ -245,6 +373,21 @@ function createAIClient(config, evalCallback, initialHistory, saveCallback) {
 
         // If there are tool calls, execute them
         if (message.tool_calls && message.tool_calls.length > 0) {
+            // IMPORTANT: This is an intermediate message with tool calls
+            // Do NOT send this to the user - it's just setup for tool execution
+            // The callback will only be called after tool execution completes
+
+            // If we're in error recovery mode, suppress the AI's commentary
+            // The status callback already informed the user about the error recovery
+            if (client.inErrorRecovery && message.content) {
+                console.log('Suppressing intermediate response during error recovery:', message.content.substring(0, 100));
+                // Don't add commentary to history - just the tool calls
+                // Update the assistant message to remove commentary
+                assistantMsg.content = null; // Clear commentary, keep tool_calls
+                // Update in history
+                client.conversationHistory[client.conversationHistory.length - 1] = assistantMsg;
+            }
+
             var toolResults = [];
             var completed = 0;
             var hasError = false;
@@ -265,19 +408,83 @@ function createAIClient(config, evalCallback, initialHistory, saveCallback) {
                         client.saveCallback('tool', JSON.stringify(result), null);
                     }
 
+                    // Check if result indicates an error (execution succeeded but returned error)
+                    var toolResultContent = null;
+                    try {
+                        toolResultContent = JSON.parse(result.content);
+                    } catch (e) {
+                        // If parsing fails, treat as non-error
+                    }
+
+                    var hasErrorResult = toolResultContent && toolResultContent.status === 'error';
+
+                    if (hasErrorResult) {
+                        // Enter error recovery mode
+                        if (!client.inErrorRecovery) {
+                            client.inErrorRecovery = true;
+                            client.iterationCount = 1;
+                            // Send status update to user
+                            if (client.statusCallback) {
+                                client.statusCallback('Code execution failed. AI is analyzing the error and generating a fix...');
+                            }
+                        } else {
+                            // Already in error recovery, increment iteration count
+                            client.iterationCount++;
+                            if (client.statusCallback) {
+                                client.statusCallback('AI is generating corrected code (attempt ' + client.iterationCount + ')...');
+                            }
+                        }
+
+                        // Check iteration limit
+                        if (client.iterationCount > client.maxIterations) {
+                            var errorMsg = 'Maximum iteration limit (' + client.maxIterations + ') reached. Unable to fix the error.';
+                            console.error(errorMsg);
+                            if (client.statusCallback) {
+                                client.statusCallback(errorMsg);
+                            }
+                            client.inErrorRecovery = false;
+                            client.iterationCount = 0;
+                            callback(new Error(errorMsg), null);
+                            return;
+                        }
+                    } else {
+                        // Success! Reset error recovery state
+                        if (client.inErrorRecovery) {
+                            client.inErrorRecovery = false;
+                            client.iterationCount = 0;
+                            if (client.statusCallback) {
+                                client.statusCallback('Code executed successfully!');
+                            }
+                        }
+                    }
+
                     completed++;
 
-                    // When all tool calls are done, make another request with results
+                    // When all tool calls are done, continue conversation
+                    // This happens for both success and error results (error recovery continues)
                     if (completed === message.tool_calls.length && !hasError) {
                         // Continue conversation with tool results
+                        // This will eventually call the callback with the FINAL response
                         continueConversation(modelType, callback);
                     }
                 });
             });
+
+            // Do NOT call callback here - we're waiting for tool execution to complete
+            // The callback will be invoked by continueConversation after tools execute
         } else {
-            // No tool calls, return the message
+            // No tool calls, this is the FINAL response - return it to the user
+            // But check if we're in error recovery - if so, this shouldn't happen
+            // (we should have tool calls to fix the error)
+            if (client.inErrorRecovery) {
+                console.warn('Received final response during error recovery without tool calls. This may indicate the AI gave up.');
+                // Reset error recovery state
+                client.inErrorRecovery = false;
+                client.iterationCount = 0;
+            }
+
             // Check if content is HTML and mark for visualization
-            var response = {
+            var finalResponse = {
                 content: message.content,
                 role: 'assistant'
             };
@@ -292,13 +499,13 @@ function createAIClient(config, evalCallback, initialHistory, saveCallback) {
             if (extractedHTML) {
                 console.log('AI response contains HTML (extracted), content length:', extractedHTML.length);
                 console.log('Extracted HTML preview:', extractedHTML.substring(0, 300));
-                response.type = 'html';
-                response.html = extractedHTML;
+                finalResponse.type = 'html';
+                finalResponse.html = extractedHTML;
             } else if (message.content && resultHandler.isHTML(message.content)) {
                 console.log('AI response detected as HTML (pure), content length:', message.content.length);
                 console.log('HTML content preview:', message.content.substring(0, 300));
-                response.type = 'html';
-                response.html = message.content;
+                finalResponse.type = 'html';
+                finalResponse.html = message.content;
             } else {
                 console.log('AI response not detected as HTML');
                 if (message.content) {
@@ -306,7 +513,7 @@ function createAIClient(config, evalCallback, initialHistory, saveCallback) {
                 }
             }
 
-            callback(null, response);
+            callback(null, finalResponse);
         }
     }
 
@@ -315,9 +522,16 @@ function createAIClient(config, evalCallback, initialHistory, saveCallback) {
      */
     function continueConversation(modelType, callback) {
         var endpointInfo = getEndpoint(modelType || client.config.ai.defaultModel);
+        var evalTool = createEvalClojureTool(client.config);
+
+        // Sanitize history before sending to API to ensure valid message sequence
+        var sanitizedHistory = sanitizeHistory(client.conversationHistory);
+
         var requestBody = {
             model: endpointInfo.model,
-            messages: client.conversationHistory,
+            messages: sanitizedHistory,
+            tools: [evalTool], // Include tools so AI can continue making tool calls during error recovery
+            tool_choice: 'auto',
             temperature: endpointInfo.temperature,
             max_tokens: endpointInfo.maxTokens
         };
@@ -349,13 +563,16 @@ function createAIClient(config, evalCallback, initialHistory, saveCallback) {
 
         var endpointInfo = getEndpoint(modelType || client.config.ai.defaultModel);
 
+        // Sanitize history before sending to API to ensure valid message sequence
+        var sanitizedHistory = sanitizeHistory(client.conversationHistory);
+
         // Prepare messages with system prompt from config
         var messages = [
             {
                 role: 'system',
                 content: client.config.ai.systemPrompt
             }
-        ].concat(client.conversationHistory);
+        ].concat(sanitizedHistory);
 
         var evalTool = createEvalClojureTool(client.config);
         var requestBody = {

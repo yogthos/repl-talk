@@ -247,38 +247,100 @@ function markdownToHTML(markdown) {
 /**
  * Extract HTML from mixed text/HTML content
  * Looks for HTML document or HTML tags within text
+ * Strips commentary text and tool call markers
  */
 function extractHTML(content) {
     if (!content || typeof content !== 'string') {
         return content;
     }
 
-    // Check if content starts with HTML already
     var trimmed = content.trim();
+
+    // Remove tool call markers if present (these shouldn't appear but handle them)
+    // Pattern: <｜tool▁calls▁begin｜>, <｜tool▁call▁begin｜>, <｜tool▁sep｜>, etc.
+    trimmed = trimmed.replace(/<[｜|][^>]*?[｜|]>/g, '');
+
+    // Remove common patterns that might slip through
+    trimmed = trimmed.replace(/[｜▁]/g, '');
+
+    // Remove common commentary phrases that might appear before HTML
+    var commentaryPatterns = [
+        /^Now I'll create.*?:/i,
+        /^Here's.*?:/i,
+        /^Let me create.*?:/i,
+        /^I'll generate.*?:/i,
+        /^Creating.*?:/i,
+        /^Generating.*?:/i
+    ];
+
+    commentaryPatterns.forEach(function(pattern) {
+        trimmed = trimmed.replace(pattern, '');
+    });
+
+    trimmed = trimmed.trim();
+
+    // Check if content starts with HTML already (no commentary)
     if (trimmed.startsWith('<!DOCTYPE') || trimmed.startsWith('<html') || trimmed.startsWith('<div')) {
-        return content;
+        return trimmed;
     }
 
-    // Look for HTML document within the content
-    var doctypeMatch = content.match(/(<!DOCTYPE[\s\S]*)/i);
+    // Try to find and extract HTML from mixed content
+    // Strategy: Look for first HTML tag and extract everything from there
+
+    // 1. Look for DOCTYPE declaration and extract everything from there
+    var doctypeMatch = trimmed.match(/<!DOCTYPE[\s\S]*/i);
     if (doctypeMatch) {
-        return doctypeMatch[1];
+        return doctypeMatch[0].trim();
     }
 
-    // Look for <html> tag within the content
-    var htmlMatch = content.match(/(<html[\s\S]*)/i);
+    // 2. Look for <html> tag and extract everything from there
+    var htmlMatch = trimmed.match(/<html[\s\S]*/i);
     if (htmlMatch) {
-        return htmlMatch[1];
+        return htmlMatch[0].trim();
     }
 
-    // Look for substantial HTML structure (div/body/etc with content)
-    var structureMatch = content.match(/(<(?:div|body|section|article|main)[^>]*>[\s\S]*)/i);
+    // 3. Look for substantial HTML structure and extract from first tag to end
+    // This handles cases where commentary appears before the HTML
+    var structureMatch = trimmed.match(/(<(?:div|body|section|article|main|table|ul|ol|h[1-6]|p)[^>]*>[\s\S]*)/i);
     if (structureMatch) {
-        return structureMatch[1];
+        var htmlContent = structureMatch[1].trim();
+
+        // Try to find the matching closing tag and extract just that portion
+        // This removes any trailing commentary
+        var firstTag = htmlContent.match(/^<(\w+)/);
+        if (firstTag) {
+            var tagName = firstTag[1];
+            // Find the last occurrence of the closing tag for this element
+            var closingTagPattern = new RegExp('</' + tagName + '>(?!.*</' + tagName + '>)', 'i');
+            var closingMatch = htmlContent.match(closingTagPattern);
+            if (closingMatch) {
+                var endIndex = closingMatch.index + closingMatch[0].length;
+                return htmlContent.substring(0, endIndex).trim();
+            }
+        }
+
+        return htmlContent;
+    }
+
+    // 4. Look for any HTML tags and try to extract clean HTML
+    // Find first HTML tag
+    var firstTagMatch = trimmed.match(/<[a-z][a-z0-9]*[\s\S]*?>/i);
+    if (firstTagMatch) {
+        var startIndex = firstTagMatch.index;
+        // Extract from first tag to end, then try to find last closing tag
+        var potentialHtml = trimmed.substring(startIndex);
+
+        // Find the last closing HTML tag to trim trailing text
+        var lastClosingTag = potentialHtml.match(/.*(<\/[a-z][a-z0-9]*>)/i);
+        if (lastClosingTag) {
+            return potentialHtml.substring(0, lastClosingTag.index + lastClosingTag[1].length).trim();
+        }
+
+        return potentialHtml.trim();
     }
 
     // If no HTML found, return original content
-    return content;
+    return trimmed;
 }
 
 /**

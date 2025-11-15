@@ -95,7 +95,7 @@ function setup(callback) {
                 }
 
                 // Create AI client with eval callback
-                testState.aiClientInstance = aiClient.createAIClient(config, evalClojure);
+                testState.aiClientInstance = aiClient.createAIClient(config, evalClojure, [], null, null);
 
                 callback(null);
             });
