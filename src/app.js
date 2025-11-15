@@ -137,7 +137,11 @@ function evalClojure(codeString, callback, sessionId) {
         // Wrap all forms in a do block first, then bind the result
         // This handles multiple top-level forms correctly
         // The do block executes all forms sequentially and returns the last expression's value
-        codeToExecute = '(def *last-result* (do\n' + codeToExecute + '\n))';
+        // After binding, evaluate *last-result* to get the actual value (not the var reference)
+        codeToExecute = '(do\n' +
+            '  (def *last-result* (do\n' + codeToExecute + '\n))\n' +
+            '  *last-result*\n' +
+            ')';
         console.log('Result binding requested, wrapping code:', codeToExecute);
     }
 
