@@ -90,24 +90,33 @@ function createAIClient(config, evalCallback, initialHistory, saveCallback, stat
                 });
 
                 // Track which tool_call_ids we've already included to prevent duplicates
+                // Keep the LAST occurrence of each tool_call_id (most recent error info)
                 var includedToolCallIds = {};
+                var toolMessages = [];
 
-                // Include tool messages that match the tool_call_ids from the assistant message
+                // Collect all tool messages that match the tool_call_ids from the assistant message
                 while (i < history.length && history[i].role === 'tool') {
                     var toolMsg = history[i];
                     if (toolMsg.tool_call_id && toolCallIds[toolMsg.tool_call_id]) {
-                        // Check for duplicate
-                        if (!includedToolCallIds[toolMsg.tool_call_id]) {
-                            sanitized.push(toolMsg);
-                            includedToolCallIds[toolMsg.tool_call_id] = true;
-                        } else {
-                            console.warn('Removing duplicate tool message with tool_call_id:', toolMsg.tool_call_id);
-                        }
+                        toolMessages.push({ msg: toolMsg, index: i });
                         i++;
                     } else {
                         // Orphaned tool message - skip it
                         console.warn('Removing orphaned tool message with tool_call_id:', toolMsg.tool_call_id);
                         i++;
+                    }
+                }
+
+                // Process tool messages, keeping only the last occurrence of each tool_call_id
+                for (var k = toolMessages.length - 1; k >= 0; k--) {
+                    var toolEntry = toolMessages[k];
+                    var toolCallId = toolEntry.msg.tool_call_id;
+                    if (!includedToolCallIds[toolCallId]) {
+                        // This is the last (most recent) occurrence of this tool_call_id
+                        sanitized.push(toolEntry.msg);
+                        includedToolCallIds[toolCallId] = true;
+                    } else {
+                        console.warn('Removing earlier duplicate tool message with tool_call_id:', toolCallId);
                     }
                 }
             }
@@ -255,22 +264,34 @@ function createAIClient(config, evalCallback, initialHistory, saveCallback, stat
                         // Check if this is a validation error vs execution error
                         var isValidationError = result.validationErrors && result.validationErrors.length > 0;
                         var errorMessage = isValidationError
-                            ? 'Code validation detected errors before execution. Please fix the validation errors and generate corrected code using eval_clojure again.'
-                            : 'The code execution failed with an error. Please analyze the error and generate corrected code using eval_clojure again.';
+                            ? 'Code validation detected errors before execution. The following code has validation errors:\n\n' + codeString + '\n\nPlease fix the validation errors and generate corrected code using eval_clojure again.'
+                            : 'The following code execution failed:\n\n' + codeString + '\n\nPlease analyze the error and generate corrected code using eval_clojure again.';
 
                         var errorResponse = {
                             status: 'error',
+                            code: codeString, // The code that caused the error
                             error: result.error,
                             message: errorMessage,
                             errorDetails: result.errorDetails || {},
                             validationErrors: result.validationErrors || null,
                             stdout: result.stdout || null,
                             stderr: result.stderr || null,
+                            rootCause: result.rootCause || null,
+                            rootEx: result.rootEx || null,
+                            stackTrace: result.stackTrace || null,
                             logs: result.logs || [],
                             executionTime: result.executionTime || null,
                             raw: result.raw || null
                         };
                         toolResponse.content = JSON.stringify(errorResponse);
+
+                        // Log error details for debugging
+                        console.log('Tool error response prepared:', {
+                            error: result.error,
+                            stderr: result.stderr,
+                            hasErrorDetails: !!result.errorDetails,
+                            hasLogs: result.logs && result.logs.length > 0
+                        });
                     } else {
                         // Success result - include logs for observability and REPL state
                         var responseData = {
@@ -505,12 +526,13 @@ function createAIClient(config, evalCallback, initialHistory, saveCallback, stat
                     }
 
                     // Check for duplicate tool_call_id before adding to history
-                    var isDuplicate = false;
+                    // If duplicate found, replace the old one with the new one (new one has latest error info)
+                    var duplicateIndex = -1;
                     for (var j = client.conversationHistory.length - 1; j >= 0; j--) {
                         var existingMsg = client.conversationHistory[j];
                         if (existingMsg.role === 'tool' && existingMsg.tool_call_id === result.tool_call_id) {
-                            isDuplicate = true;
-                            console.warn('Duplicate tool message detected with tool_call_id:', result.tool_call_id, 'at position', j);
+                            duplicateIndex = j;
+                            console.warn('Duplicate tool message detected with tool_call_id:', result.tool_call_id, 'at position', j, '- replacing with latest');
                             break;
                         }
                         // Stop checking when we reach the assistant message with tool_calls
@@ -519,12 +541,16 @@ function createAIClient(config, evalCallback, initialHistory, saveCallback, stat
                         }
                     }
 
-                    // Always add to toolResults for continueConversation, but only add to history if not duplicate
+                    // Always add to toolResults for continueConversation
                     toolResults.push(result);
-                    if (!isDuplicate) {
-                        client.conversationHistory.push(result);
+
+                    if (duplicateIndex >= 0) {
+                        // Replace the old tool message with the new one (ensures latest error info is used)
+                        client.conversationHistory[duplicateIndex] = result;
+                        console.log('Replaced duplicate tool message at index', duplicateIndex, 'with latest result');
                     } else {
-                        console.warn('Skipping duplicate tool message addition to history for tool_call_id:', result.tool_call_id);
+                        // No duplicate, add to history normally
+                        client.conversationHistory.push(result);
                     }
 
                     // Save tool result to database if save callback is provided
@@ -543,6 +569,15 @@ function createAIClient(config, evalCallback, initialHistory, saveCallback, stat
                     var hasErrorResult = toolResultContent && toolResultContent.status === 'error';
 
                     if (hasErrorResult) {
+                        // Log error details for debugging error recovery
+                        console.log('Error detected in tool result:', {
+                            tool_call_id: result.tool_call_id,
+                            error: toolResultContent.error,
+                            stderr: toolResultContent.stderr,
+                            hasErrorDetails: !!toolResultContent.errorDetails,
+                            iterationCount: client.iterationCount
+                        });
+
                         // Enter error recovery mode
                         if (!client.inErrorRecovery) {
                             client.inErrorRecovery = true;
@@ -551,12 +586,14 @@ function createAIClient(config, evalCallback, initialHistory, saveCallback, stat
                             if (client.statusCallback) {
                                 client.statusCallback('Code execution failed. AI is analyzing the error and generating a fix...');
                             }
+                            console.log('Entered error recovery mode, iteration:', client.iterationCount);
                         } else {
                             // Already in error recovery, increment iteration count
                             client.iterationCount++;
                             if (client.statusCallback) {
                                 client.statusCallback('AI is generating corrected code (attempt ' + client.iterationCount + ')...');
                             }
+                            console.log('Error recovery continuing, iteration:', client.iterationCount);
                         }
                     } else {
                         // Success! Reset error recovery state
@@ -566,6 +603,7 @@ function createAIClient(config, evalCallback, initialHistory, saveCallback, stat
                             if (client.statusCallback) {
                                 client.statusCallback('Code executed successfully!');
                             }
+                            console.log('Error recovery completed successfully');
                         }
                     }
 
@@ -596,7 +634,7 @@ function createAIClient(config, evalCallback, initialHistory, saveCallback, stat
 
             // Check if content is HTML and mark for visualization
             var finalResponse = {
-                content: message.content,
+                content: message.content || '',
                 role: 'assistant'
             };
 
@@ -621,6 +659,16 @@ function createAIClient(config, evalCallback, initialHistory, saveCallback, stat
                 console.log('AI response not detected as HTML');
                 if (message.content) {
                     console.log('Content preview:', message.content.substring(0, 200));
+                    // Even if not HTML, still send the text content
+                    finalResponse.content = message.content;
+                } else {
+                    console.warn('AI returned empty content in final response');
+                    // Provide a fallback message if content is empty
+                    if (client.iterationCount > 0) {
+                        finalResponse.content = 'The AI attempted to fix the error ' + client.iterationCount + ' time(s) but was unable to generate a working solution. Please review the error messages and try a different approach.';
+                    } else {
+                        finalResponse.content = 'The AI did not provide a response. This may indicate an error or the AI gave up during error recovery.';
+                    }
                 }
             }
 

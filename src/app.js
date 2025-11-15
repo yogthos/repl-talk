@@ -131,10 +131,13 @@ function evalClojure(codeString, callback, sessionId) {
 
     // If binding is requested, wrap the code to bind result to *last-result*
     if (shouldBindResult) {
-        // Remove the bind-result comment and wrap the code
-        codeToExecute = codeString.replace(/;;\s*bind-result\s*/gi, '');
-        // Wrap in (def *last-result* ...)
-        codeToExecute = '(def *last-result* ' + codeToExecute.trim() + ')';
+        // Remove the bind-result comment
+        codeToExecute = codeString.replace(/;;\s*bind-result\s*/gi, '').trim();
+
+        // Wrap all forms in a do block first, then bind the result
+        // This handles multiple top-level forms correctly
+        // The do block executes all forms sequentially and returns the last expression's value
+        codeToExecute = '(def *last-result* (do\n' + codeToExecute + '\n))';
         console.log('Result binding requested, wrapping code:', codeToExecute);
     }
 
@@ -274,13 +277,8 @@ function handleCodeApproval(messageId, editedCode, ws) {
         // Clean up pending execution
         delete appState.pendingCodeExecutions[messageId];
 
-        // If result is an error, notify the client that AI will iterate
-        if (result && result.type === 'error') {
-            sendToClient(ws, {
-                type: 'status',
-                message: 'Code execution failed. AI is analyzing the error and generating a fix...'
-            });
-        }
+        // Note: Error status messages are handled by the AI client's statusCallback
+        // which includes deduplication logic, so we don't need to send it here
 
         // Call the original callback
         callback(err, result);
@@ -367,11 +365,17 @@ function handleUserMessage(userMessage, modelType, ws) {
         };
 
         // Create status callback to send status updates to user
+        // Track last message to avoid sending duplicate consecutive messages
+        var lastStatusMessage = null;
         var statusCallback = function(statusMessage) {
-            sendToClient(ws, {
-                type: 'status',
-                message: statusMessage
-            });
+            // Only send if message is different from last one
+            if (statusMessage !== lastStatusMessage) {
+                lastStatusMessage = statusMessage;
+                sendToClient(ws, {
+                    type: 'status',
+                    message: statusMessage
+                });
+            }
         };
 
         // Create wrapped eval callback that requests user approval
