@@ -83,14 +83,31 @@ function validateCode(code, cljKondoPath, callback) {
 
                 // clj-kondo output structure: {findings: [...]}
                 if (output.findings && Array.isArray(output.findings)) {
-                    // Filter for errors and warnings (level: :error or :warning)
-                    var findings = output.findings.filter(function(finding) {
-                        return finding.level === 'error' || finding.level === 'warning';
+                    // Separate errors and warnings
+                    var errors = output.findings.filter(function(finding) {
+                        return finding.level === 'error';
+                    });
+                    var warnings = output.findings.filter(function(finding) {
+                        return finding.level === 'warning';
                     });
 
-                    if (findings.length > 0) {
+                    // Only mark as invalid if there are errors (warnings are allowed)
+                    if (errors.length > 0) {
                         result.valid = false;
-                        result.errors = findings.map(function(finding) {
+                        result.errors = errors.map(function(finding) {
+                            return {
+                                level: finding.level,
+                                message: finding.message,
+                                row: finding.row || 0,
+                                col: finding.col || 0,
+                                filename: finding.filename || 'stdin'
+                            };
+                        });
+                    }
+
+                    // Include warnings in result but don't block execution
+                    if (warnings.length > 0) {
+                        result.warnings = warnings.map(function(finding) {
                             return {
                                 level: finding.level,
                                 message: finding.message,

@@ -14,6 +14,7 @@ var disconnectBtn = document.getElementById('disconnect-btn');
 var userInput = document.getElementById('user-input');
 var sendBtn = document.getElementById('send-btn');
 var clearBtn = document.getElementById('clear-btn');
+var clearReplStateBtn = document.getElementById('clear-repl-state-btn');
 var aiOutput = document.getElementById('ai-output');
 var canvasContainer = document.getElementById('canvas-container');
 var canvasIframe = document.getElementById('canvas-iframe');
@@ -90,12 +91,14 @@ function updateConnectionStatus(connected) {
         connectBtn.disabled = true;
         disconnectBtn.disabled = false;
         sendBtn.disabled = false;
+        clearReplStateBtn.disabled = false;
     } else {
         connectionStatus.textContent = 'Disconnected';
         connectionStatus.className = 'status-indicator disconnected';
         connectBtn.disabled = false;
         disconnectBtn.disabled = true;
         sendBtn.disabled = true;
+        clearReplStateBtn.disabled = true;
     }
 }
 
@@ -1041,6 +1044,21 @@ function rejectCodeExecution(messageId) {
 connectBtn.addEventListener('click', connect);
 disconnectBtn.addEventListener('click', disconnect);
 sendBtn.addEventListener('click', sendMessage);
+
+// Clear REPL State button handler
+clearReplStateBtn.addEventListener('click', function() {
+    if (!isConnected || !ws) {
+        addOutputMessage('Not connected to server', 'error');
+        return;
+    }
+
+    if (confirm('Are you sure you want to clear the REPL state? This will remove all tracked functions, variables, and results for this session.')) {
+        ws.send(JSON.stringify({
+            type: 'clear_repl_state'
+        }));
+    }
+});
+
 clearBtn.addEventListener('click', function() {
     aiOutput.innerHTML = '';
     var iframeDoc = getIframeDocument();

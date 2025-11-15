@@ -19,6 +19,8 @@ var resultHandler = require('./result-handler');
 var db = require('./db');
 var codeValidator = require('./code-validator');
 var clojureHelpers = require('./clojure-helpers');
+var replState = require('./repl-state');
+var codeAnalyzer = require('./code-analyzer');
 
 // Application state
 var appState = {
@@ -111,17 +113,36 @@ function initialize(callback) {
 /**
  * Eval callback for AI client - executes Clojure code via nREPL
  * Validates code with clj-kondo before execution if validation is enabled
+ * @param {string} codeString - Clojure code to execute
+ * @param {Function} callback - Callback function (err, result)
+ * @param {string} sessionId - Optional session ID for state tracking
  */
-function evalClojure(codeString, callback) {
+function evalClojure(codeString, callback, sessionId) {
     if (!appState.nreplConnection || !appState.nreplSession) {
         return callback(new Error('nREPL not connected'), null);
     }
 
     console.log('Evaluating Clojure code:', codeString);
 
+    // Check if result binding is requested
+    var shouldBindResult = codeAnalyzer.requestsResultBinding(codeString);
+    var originalCode = codeString;
+    var codeToExecute = codeString;
+
+    // If binding is requested, wrap the code to bind result to *last-result*
+    if (shouldBindResult) {
+        // Remove the bind-result comment and wrap the code
+        codeToExecute = codeString.replace(/;;\s*bind-result\s*/gi, '');
+        // Wrap in (def *last-result* ...)
+        codeToExecute = '(def *last-result* ' + codeToExecute.trim() + ')';
+        console.log('Result binding requested, wrapping code:', codeToExecute);
+    }
+
     // Validate code before execution if validation is enabled
+    // Use original code for validation (not the wrapped version)
+    var codeToValidate = shouldBindResult ? originalCode : codeToExecute;
     if (config.codeValidation.enabled) {
-        codeValidator.validateCode(codeString, config.codeValidation.cljKondoPath, function(validateErr, validateResult) {
+        codeValidator.validateCode(codeToValidate, config.codeValidation.cljKondoPath, function(validateErr, validateResult) {
             if (validateErr) {
                 // Validation process failed (e.g., clj-kondo not found)
                 // Log warning but continue with execution (graceful degradation)
@@ -154,6 +175,11 @@ function evalClojure(codeString, callback) {
                 // Validation passed (or was skipped) - proceed with execution
                 if (validateResult.skipped) {
                     console.log('Code validation skipped:', validateResult.reason);
+                } else if (validateResult.warnings && validateResult.warnings.length > 0) {
+                    console.log('Code validation passed with', validateResult.warnings.length, 'warning(s)');
+                    validateResult.warnings.forEach(function(warning) {
+                        console.log('  Warning:', warning.message, 'at line', warning.row);
+                    });
                 } else {
                     console.log('Code validation passed');
                 }
@@ -167,7 +193,7 @@ function evalClojure(codeString, callback) {
 
     function executeCode() {
         var startTime = Date.now();
-        appState.nreplConnection.eval(codeString, undefined, appState.nreplSession, function(err, messages) {
+        appState.nreplConnection.eval(codeToExecute, undefined, appState.nreplSession, function(err, messages) {
             if (err) {
                 console.error('nREPL eval error:', err);
                 return callback(err, null);
@@ -182,6 +208,31 @@ function evalClojure(codeString, callback) {
             console.log('Evaluation result:', formatted);
             if (formatted.logs && formatted.logs.length > 0) {
                 console.log('Execution logs:', formatted.logs.length, 'entries');
+            }
+
+            // Update REPL state if sessionId is provided and execution was successful
+            if (sessionId && (!formatted.type || formatted.type !== 'error')) {
+                // Analyze code to extract functions and variables
+                var analysis = codeAnalyzer.analyzeCode(originalCode);
+
+                // Add functions to state
+                analysis.functions.forEach(function(func) {
+                    replState.addFunction(sessionId, func.name, {
+                        signature: func.signature,
+                        docstring: func.docstring,
+                        namespace: func.namespace
+                    });
+                });
+
+                // Add variables to state
+                analysis.variables.forEach(function(variable) {
+                    replState.addVariable(sessionId, variable.name, variable.type);
+                });
+
+                // Update last result if execution was successful
+                if (formatted.value !== null && formatted.value !== undefined) {
+                    replState.updateLastResult(sessionId, formatted.value, formatted.type || 'unknown');
+                }
             }
 
             // Do NOT broadcast tool results to canvas - only final AI responses should be displayed
@@ -216,6 +267,9 @@ function handleCodeApproval(messageId, editedCode, ws) {
         console.log('Executing approved code (original):', code);
     }
 
+    // Get sessionId from WebSocket
+    var sessionId = ws.sessionId;
+
     evalClojure(code, function(err, result) {
         // Clean up pending execution
         delete appState.pendingCodeExecutions[messageId];
@@ -230,7 +284,7 @@ function handleCodeApproval(messageId, editedCode, ws) {
 
         // Call the original callback
         callback(err, result);
-    });
+    }, sessionId);
 }
 
 /**
@@ -250,6 +304,40 @@ function handleCodeRejection(messageId, ws) {
     delete appState.pendingCodeExecutions[messageId];
 
     callback(new Error('Code execution cancelled by user'), null);
+}
+
+/**
+ * Handle REPL state clearing request
+ */
+function handleClearReplState(ws) {
+    var sessionId = ws.sessionId;
+    if (!sessionId) {
+        console.error('No session ID found for WebSocket connection');
+        sendToClient(ws, { type: 'error', message: 'Session not found' });
+        return;
+    }
+
+    console.log('Clearing REPL state for session:', sessionId);
+
+    // Clear state
+    replState.clearSessionState(sessionId);
+
+    // Optionally clear *last-result* in the REPL session
+    if (appState.nreplConnection && appState.nreplSession) {
+        var clearCode = "(ns-unmap *ns* '*last-result*)";
+        appState.nreplConnection.eval(clearCode, undefined, appState.nreplSession, function(err) {
+            if (err) {
+                console.warn('Failed to clear *last-result* in REPL:', err);
+            } else {
+                console.log('Cleared *last-result* in REPL session');
+            }
+        });
+    }
+
+    sendToClient(ws, {
+        type: 'status',
+        message: 'REPL state cleared'
+    });
 }
 
 /**
@@ -309,7 +397,7 @@ function handleUserMessage(userMessage, modelType, ws) {
         };
 
         // Create AI client with loaded history, save callback, and status callback
-        client = aiClient.createAIClient(config, evalCallbackWithApproval, history, saveCallback, statusCallback);
+        client = aiClient.createAIClient(config, evalCallbackWithApproval, history, saveCallback, statusCallback, sessionId);
         appState.aiClients[sessionId] = client;
     }
 
@@ -417,6 +505,9 @@ function setupWebServer() {
                         break;
                     case 'code_rejected':
                         handleCodeRejection(data.messageId, ws);
+                        break;
+                    case 'clear_repl_state':
+                        handleClearReplState(ws);
                         break;
                     default:
                         console.log('Unknown message type:', data.type);

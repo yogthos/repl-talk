@@ -40,14 +40,18 @@ function createEvalClojureTool(config) {
  * @param {Array} initialHistory - Optional initial conversation history
  * @param {Function} saveCallback - Optional callback to save messages (sessionId, role, content, toolCalls)
  * @param {Function} statusCallback - Optional callback to send status updates to user (message)
+ * @param {string} sessionId - Optional session ID for REPL state tracking
  */
-function createAIClient(config, evalCallback, initialHistory, saveCallback, statusCallback) {
+function createAIClient(config, evalCallback, initialHistory, saveCallback, statusCallback, sessionId) {
+    var replState = require('./repl-state');
+
     var client = {
         config: config,
         evalCallback: evalCallback,
         conversationHistory: [],
         saveCallback: saveCallback || null,
         statusCallback: statusCallback || null,
+        sessionId: sessionId || null,
         // Error recovery state
         inErrorRecovery: false,
         iterationCount: 0
@@ -268,13 +272,25 @@ function createAIClient(config, evalCallback, initialHistory, saveCallback, stat
                         };
                         toolResponse.content = JSON.stringify(errorResponse);
                     } else {
-                        // Success result - include logs for observability
-                        toolResponse.content = JSON.stringify({
+                        // Success result - include logs for observability and REPL state
+                        var responseData = {
                             status: 'success',
                             result: result,
                             logs: result.logs || [],
                             executionTime: result.executionTime || null
-                        });
+                        };
+
+                        // Include REPL state if sessionId is available
+                        if (client.sessionId) {
+                            try {
+                                var stateSummary = replState.getStateSummary(client.sessionId);
+                                responseData.replState = stateSummary;
+                            } catch (err) {
+                                console.warn('Failed to get REPL state summary:', err);
+                            }
+                        }
+
+                        toolResponse.content = JSON.stringify(responseData);
                     }
 
                     callback(null, toolResponse);
