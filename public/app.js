@@ -129,34 +129,70 @@ function visualizeResult(result) {
     }
 
     var type = result.type || 'unknown';
-    var data = result.value;
-
     var vizDiv = document.createElement('div');
     vizDiv.className = 'visualization';
 
-    switch (type) {
-        case 'table-data':
-            renderTable(vizDiv, data);
-            break;
-        case 'chart-data':
-            renderChart(vizDiv, data);
-            break;
-        case 'map':
-            renderMap(vizDiv, data);
-            break;
-        case 'list':
-            renderList(vizDiv, data);
-            break;
-        case 'string':
-        case 'number':
-        case 'boolean':
-            renderSimple(vizDiv, data);
-            break;
-        default:
-            renderJSON(vizDiv, result);
+    // Primary HTML rendering - if HTML is present, use it
+    if (type === 'html') {
+        // Check for HTML in various possible locations
+        var htmlContent = result.html || result.data || result.content;
+        if (htmlContent) {
+            renderHTML(vizDiv, htmlContent);
+        } else {
+            // Fallback: try to extract from value if it's a string
+            var data = result.value;
+            if (typeof data === 'string' && data.trim().startsWith('<')) {
+                renderHTML(vizDiv, data);
+            } else {
+                renderJSON(vizDiv, result);
+            }
+        }
+    } else {
+        // Fallback to legacy rendering for non-HTML results
+        var data = result.value;
+        switch (type) {
+            case 'table-data':
+                renderTable(vizDiv, data);
+                break;
+            case 'chart-data':
+                renderChart(vizDiv, data);
+                break;
+            case 'map':
+                renderMap(vizDiv, data);
+                break;
+            case 'list':
+                renderList(vizDiv, data);
+                break;
+            case 'string':
+            case 'number':
+            case 'boolean':
+                renderSimple(vizDiv, data);
+                break;
+            default:
+                renderJSON(vizDiv, result);
+        }
     }
 
     canvasContainer.appendChild(vizDiv);
+}
+
+/**
+ * Render HTML content in the canvas
+ * Uses innerHTML to render the HTML directly
+ */
+function renderHTML(container, htmlContent) {
+    // Create a wrapper div for the HTML content
+    var htmlDiv = document.createElement('div');
+    htmlDiv.className = 'html-content';
+    htmlDiv.style.padding = '1rem';
+    htmlDiv.style.maxWidth = '100%';
+    htmlDiv.style.overflow = 'auto';
+
+    // Set the HTML content directly
+    // Note: This renders HTML as-is. For production, consider sanitization
+    htmlDiv.innerHTML = htmlContent;
+
+    container.appendChild(htmlDiv);
 }
 
 function renderTable(container, data) {

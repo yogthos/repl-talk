@@ -207,6 +207,16 @@ function parseClojureValue(str) {
 }
 
 /**
+ * Detect if a string contains HTML content
+ */
+function isHTML(str) {
+    if (typeof str !== 'string') return false;
+    // Check for common HTML tags
+    var htmlTagPattern = /<\/?[a-z][\s\S]*>/i;
+    return htmlTagPattern.test(str);
+}
+
+/**
  * Determine the type of result for visualization routing
  */
 function determineType(value) {
@@ -223,6 +233,10 @@ function determineType(value) {
     }
 
     if (typeof value === 'string') {
+        // Check if it's HTML content first
+        if (isHTML(value)) {
+            return 'html';
+        }
         // Check if it looks like a URL or image
         if (/^https?:\/\//.test(value)) {
             return 'url';
@@ -297,6 +311,7 @@ function formatForVisualization(result) {
 module.exports = {
     serializeResult: serializeResult,
     determineType: determineType,
-    formatForVisualization: formatForVisualization
+    formatForVisualization: formatForVisualization,
+    isHTML: isHTML
 };
 

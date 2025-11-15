@@ -143,7 +143,20 @@ function handleUserMessage(userMessage, modelType, ws) {
         }
 
         if (response && response.content) {
-            sendToClient(ws, { type: 'ai_response', content: response.content });
+            // If response contains HTML, send it to canvas for visualization
+            if (response.type === 'html' && response.html) {
+                sendToClient(ws, {
+                    type: 'result',
+                    data: {
+                        type: 'html',
+                        html: response.html,
+                        content: response.content
+                    }
+                });
+            } else {
+                // Regular text response goes to chat
+                sendToClient(ws, { type: 'ai_response', content: response.content });
+            }
         }
     });
 }

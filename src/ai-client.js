@@ -7,7 +7,7 @@
 
 var https = require('https');
 var http = require('http');
-var url = require('url');
+var resultHandler = require('./result-handler');
 
 /**
  * Create the eval_clojure tool schema from config
@@ -68,14 +68,18 @@ function createAIClient(config, evalCallback) {
      * Make HTTP request to AI API
      */
     function makeRequest(endpointUrl, apiKey, body, callback) {
-        var parsedUrl = url.parse(endpointUrl);
+        // Use WHATWG URL API instead of deprecated url.parse()
+        var parsedUrl = new URL(endpointUrl);
         var isHttps = parsedUrl.protocol === 'https:';
         var httpModule = isHttps ? https : http;
+
+        // Build path from pathname and search (query string)
+        var path = parsedUrl.pathname + parsedUrl.search;
 
         var options = {
             hostname: parsedUrl.hostname,
             port: parsedUrl.port || (isHttps ? 443 : 80),
-            path: parsedUrl.path,
+            path: path,
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -193,10 +197,19 @@ function createAIClient(config, evalCallback) {
             });
         } else {
             // No tool calls, return the message
-            callback(null, {
+            // Check if content is HTML and mark for visualization
+            var response = {
                 content: message.content,
                 role: 'assistant'
-            });
+            };
+
+            // Detect if content is HTML
+            if (message.content && resultHandler.isHTML(message.content)) {
+                response.type = 'html';
+                response.html = message.content;
+            }
+
+            callback(null, response);
         }
     }
 
