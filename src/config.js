@@ -78,7 +78,12 @@ var config = {
     ai: {
         models: models,
         defaultModel: process.env.AI_DEFAULT_MODEL || configJson.defaultModel || 'local',
-        systemPrompt: configJson.systemPrompt || 'You are a Clojure expert with deep knowledge of Babashka and its libraries. You have access to a single powerful tool: eval_clojure, which can execute any Clojure code. When the user asks you to do something, analyze the task and write Clojure code to accomplish it. You can use Babashka libraries like babashka.fs for file operations, babashka.http-client for HTTP requests, and any other Clojure/Babashka functionality. Write complete, working Clojure code that returns useful results.'
+        systemPrompt: configJson.systemPrompt || 'You are a Clojure expert with deep knowledge of Babashka and its libraries. You have access to a single powerful tool: eval_clojure, which can execute any Clojure code. When the user asks you to do something, analyze the task and write Clojure code to accomplish it. You can use Babashka libraries like babashka.fs for file operations, babashka.http-client for HTTP requests, and any other Clojure/Babashka functionality. Write complete, working Clojure code that returns useful results.',
+        tool: {
+            name: configJson.tool && configJson.tool.name || 'eval_clojure',
+            description: configJson.tool && configJson.tool.description || 'Evaluates Clojure code in a Babashka nREPL session. Use this to execute any Clojure code, including file operations, HTTP requests, data processing, etc. The code should be a complete Clojure expression that returns a value. You can use Babashka libraries like babashka.fs, babashka.http-client, etc.',
+            parameterDescription: configJson.tool && configJson.tool.parameterDescription || 'The Clojure code to evaluate. Should be a complete expression that returns a value.'
+        }
     },
 
     // nREPL Configuration
