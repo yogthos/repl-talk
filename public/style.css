@@ -387,6 +387,29 @@ label {
     outline: none;
 }
 
+/* Clojure syntax highlighting */
+.code-preview-card .code-display .cm-clojure-keyword {
+    color: #c586c0;
+    font-weight: 500;
+}
+
+.code-preview-card .code-display .cm-clojure-keyword2 {
+    color: #569cd6;
+}
+
+.code-preview-card .code-display .cm-clojure-string {
+    color: #ce9178;
+}
+
+.code-preview-card .code-display .cm-clojure-comment {
+    color: #6a9955;
+    font-style: italic;
+}
+
+.code-preview-card .code-display .cm-clojure-number {
+    color: #b5cea8;
+}
+
 .code-preview-card .code-display pre {
     margin: 0;
 }

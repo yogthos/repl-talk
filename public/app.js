@@ -722,7 +722,7 @@ function addCodePreviewCard(code, messageId) {
                 // Don't add keymap - it causes version conflicts
                 // The editor will still be editable via mouse and basic keyboard, just without advanced shortcuts
 
-                // Add Clojure mode if available, otherwise use plain text
+                // Add Clojure highlighting if available
                 if (window.CodeMirror.clojureMode) {
                     extensions.push(window.CodeMirror.clojureMode);
                     console.log('Using Clojure syntax highlighting');
@@ -745,6 +745,99 @@ function addCodePreviewCard(code, messageId) {
                 // Ensure the editor is focusable and editable
                 editor.contentDOM.setAttribute('contenteditable', 'true');
                 editor.contentDOM.setAttribute('spellcheck', 'false');
+
+                // Create and apply Clojure highlighting using the same module instances
+                // Import modules and create ViewPlugin inline to avoid version conflicts
+                if (window.CodeMirror.clojurePatterns) {
+                    Promise.all([
+                        import('https://cdn.jsdelivr.net/npm/@codemirror/view@6.26.0/+esm'),
+                        import('https://cdn.jsdelivr.net/npm/@codemirror/state@6.4.0/+esm')
+                    ]).then(function(modules) {
+                        var viewModule = modules[0];
+                        var stateModule = modules[1];
+                        var patterns = window.CodeMirror.clojurePatterns;
+
+                        try {
+                            // Create ViewPlugin using the imported modules (same URL = same instance)
+                            var ClojureHighlighter = viewModule.ViewPlugin.fromClass(class {
+                                constructor(view) {
+                                    this.decorations = this.buildDecorations(view, viewModule, stateModule, patterns);
+                                }
+
+                                update(update) {
+                                    if (update.docChanged || update.viewportChanged) {
+                                        this.decorations = this.buildDecorations(update.view, viewModule, stateModule, patterns);
+                                    }
+                                }
+
+                                buildDecorations(view, viewModule, stateModule, patterns) {
+                                    var builder = new stateModule.RangeSetBuilder();
+                                    var text = view.state.doc.toString();
+                                    var Decoration = viewModule.Decoration;
+
+                                    // Reset regex lastIndex
+                                    patterns.keywords.lastIndex = 0;
+                                    patterns.strings.lastIndex = 0;
+                                    patterns.comments.lastIndex = 0;
+                                    patterns.numbers.lastIndex = 0;
+                                    patterns.keywords2.lastIndex = 0;
+
+                                    // Highlight keywords
+                                    var match;
+                                    while ((match = patterns.keywords.exec(text)) !== null) {
+                                        builder.add(match.index, match.index + match[0].length,
+                                            Decoration.mark({class: 'cm-clojure-keyword'}));
+                                    }
+
+                                    // Highlight strings
+                                    while ((match = patterns.strings.exec(text)) !== null) {
+                                        builder.add(match.index, match.index + match[0].length,
+                                            Decoration.mark({class: 'cm-clojure-string'}));
+                                    }
+
+                                    // Highlight comments
+                                    while ((match = patterns.comments.exec(text)) !== null) {
+                                        try {
+                                            var line = view.state.doc.lineAt(match.index);
+                                            builder.add(match.index, line.to,
+                                                Decoration.mark({class: 'cm-clojure-comment'}));
+                                        } catch (e) {
+                                            builder.add(match.index, match.index + match[0].length,
+                                                Decoration.mark({class: 'cm-clojure-comment'}));
+                                        }
+                                    }
+
+                                    // Highlight numbers
+                                    while ((match = patterns.numbers.exec(text)) !== null) {
+                                        builder.add(match.index, match.index + match[0].length,
+                                            Decoration.mark({class: 'cm-clojure-number'}));
+                                    }
+
+                                    // Highlight keywords (like :keyword)
+                                    while ((match = patterns.keywords2.exec(text)) !== null) {
+                                        builder.add(match.index, match.index + match[0].length,
+                                            Decoration.mark({class: 'cm-clojure-keyword2'}));
+                                    }
+
+                                    return builder.finish();
+                                }
+                            }, {
+                                decorations: function(v) { return v.decorations; }
+                            });
+
+                            // Add the highlighter to the editor's state
+                            var newState = editor.state.update({
+                                effects: stateModule.StateEffect.appendConfig.of([ClojureHighlighter])
+                            });
+                            editor.dispatch(newState);
+                            console.log('Clojure syntax highlighting added');
+                        } catch (e) {
+                            console.warn('Could not add Clojure highlighter:', e);
+                        }
+                    }).catch(function(err) {
+                        console.warn('Could not load modules for highlighting:', err);
+                    });
+                }
 
                 // Force focus to make it clear the editor is active
                 setTimeout(function() {

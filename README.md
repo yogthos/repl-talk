@@ -1,10 +1,10 @@
-# REPL Chat
+# REPL Talk
 
 Interactive REPL interface with AI integration using Babashka nREPL. An AI-powered tool that executes Clojure code through a single `eval_clojure` function, enabling natural language interaction with your system.
 
 ## Overview
 
-REPL Chat provides a web-based interface where you can chat with an AI assistant that can execute Clojure code via Babashka nREPL. Instead of a fixed set of tools, the AI has access to the full Clojure runtime, allowing it to dynamically generate and execute code to accomplish tasks.
+REPL Talk provides a web-based interface where you can chat with an AI assistant that can execute Clojure code via Babashka nREPL. Instead of a fixed set of tools, the AI has access to the full Clojure runtime, allowing it to dynamically generate and execute code to accomplish tasks.
 
 ## Features
 

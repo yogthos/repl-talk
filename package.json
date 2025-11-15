@@ -1,5 +1,5 @@
 {
-    "name": "repl-chat",
+    "name": "repl-talk",
     "version": "0.1.0",
     "description": "Interactive REPL interface with AI integration using Babashka nREPL",
     "main": "src/app.js",
