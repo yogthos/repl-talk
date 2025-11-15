@@ -86,11 +86,20 @@ function createAIClient(config, evalCallback, initialHistory, saveCallback, stat
                     toolCallIds[toolCall.id] = true;
                 });
 
+                // Track which tool_call_ids we've already included to prevent duplicates
+                var includedToolCallIds = {};
+
                 // Include tool messages that match the tool_call_ids from the assistant message
                 while (i < history.length && history[i].role === 'tool') {
                     var toolMsg = history[i];
                     if (toolMsg.tool_call_id && toolCallIds[toolMsg.tool_call_id]) {
-                        sanitized.push(toolMsg);
+                        // Check for duplicate
+                        if (!includedToolCallIds[toolMsg.tool_call_id]) {
+                            sanitized.push(toolMsg);
+                            includedToolCallIds[toolMsg.tool_call_id] = true;
+                        } else {
+                            console.warn('Removing duplicate tool message with tool_call_id:', toolMsg.tool_call_id);
+                        }
                         i++;
                     } else {
                         // Orphaned tool message - skip it
@@ -480,8 +489,28 @@ function createAIClient(config, evalCallback, initialHistory, saveCallback, stat
                         }
                     }
 
+                    // Check for duplicate tool_call_id before adding to history
+                    var isDuplicate = false;
+                    for (var j = client.conversationHistory.length - 1; j >= 0; j--) {
+                        var existingMsg = client.conversationHistory[j];
+                        if (existingMsg.role === 'tool' && existingMsg.tool_call_id === result.tool_call_id) {
+                            isDuplicate = true;
+                            console.warn('Duplicate tool message detected with tool_call_id:', result.tool_call_id, 'at position', j);
+                            break;
+                        }
+                        // Stop checking when we reach the assistant message with tool_calls
+                        if (existingMsg.role === 'assistant' && existingMsg.tool_calls) {
+                            break;
+                        }
+                    }
+
+                    // Always add to toolResults for continueConversation, but only add to history if not duplicate
                     toolResults.push(result);
-                    client.conversationHistory.push(result);
+                    if (!isDuplicate) {
+                        client.conversationHistory.push(result);
+                    } else {
+                        console.warn('Skipping duplicate tool message addition to history for tool_call_id:', result.tool_call_id);
+                    }
 
                     // Save tool result to database if save callback is provided
                     if (client.saveCallback) {
