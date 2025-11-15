@@ -16,13 +16,15 @@ var nreplServer = require('./nrepl-server');
 var nreplClient = require('./nrepl-client');
 var aiClient = require('./ai-client');
 var resultHandler = require('./result-handler');
+var db = require('./db');
 
 // Application state
 var appState = {
     nreplServerState: null,
     nreplConnection: null,
     nreplSession: null,
-    aiClient: null,
+    aiClients: {}, // Map of sessionId -> aiClient
+    pendingCodeExecutions: {}, // Map of messageId -> {code, callback, toolCall, ws}
     wss: null,
     httpServer: null
 };
@@ -81,8 +83,8 @@ function initialize(callback) {
                     console.log('Created nREPL session:', newSession);
                 }
 
-                // Create AI client with eval callback
-                appState.aiClient = aiClient.createAIClient(config, evalClojure);
+                // Note: AI clients are now created per-session in handleUserMessage
+                // We no longer create a global AI client here
 
                 broadcastToClients({ type: 'connection', message: 'Connected to nREPL' });
                 callback(null);
@@ -113,11 +115,66 @@ function evalClojure(codeString, callback) {
 
         console.log('Evaluation result:', formatted);
 
-        // Broadcast result to web clients
-        broadcastToClients({ type: 'result', data: formatted });
+        // Do NOT broadcast tool results to canvas - only final AI responses should be displayed
+        // Tool results are passed to AI client callback for processing into final HTML response
 
         callback(null, formatted);
     });
+}
+
+/**
+ * Handle code approval from user
+ */
+function handleCodeApproval(messageId, ws) {
+    console.log('Code approved for message:', messageId);
+
+    var pending = appState.pendingCodeExecutions[messageId];
+    if (!pending) {
+        console.error('No pending code execution found for message:', messageId);
+        sendToClient(ws, { type: 'error', message: 'No pending code execution found' });
+        return;
+    }
+
+    // Execute the code
+    var code = pending.code;
+    var callback = pending.callback;
+
+    console.log('Executing approved code:', code);
+
+    evalClojure(code, function(err, result) {
+        // Clean up pending execution
+        delete appState.pendingCodeExecutions[messageId];
+
+        // If result is an error, notify the client that AI will iterate
+        if (result && result.type === 'error') {
+            sendToClient(ws, {
+                type: 'status',
+                message: 'Code execution encountered an error. AI is analyzing and generating a fix...'
+            });
+        }
+
+        // Call the original callback
+        callback(err, result);
+    });
+}
+
+/**
+ * Handle code rejection from user
+ */
+function handleCodeRejection(messageId, ws) {
+    console.log('Code rejected for message:', messageId);
+
+    var pending = appState.pendingCodeExecutions[messageId];
+    if (!pending) {
+        console.error('No pending code execution found for message:', messageId);
+        return;
+    }
+
+    // Call callback with error
+    var callback = pending.callback;
+    delete appState.pendingCodeExecutions[messageId];
+
+    callback(new Error('Code execution cancelled by user'), null);
 }
 
 /**
@@ -127,6 +184,52 @@ function handleUserMessage(userMessage, modelType, ws) {
     console.log('User message:', userMessage);
     console.log('Using model:', modelType || config.ai.defaultModel);
 
+    var sessionId = ws.sessionId;
+    if (!sessionId) {
+        console.error('No session ID found for WebSocket connection');
+        sendToClient(ws, { type: 'error', message: 'Session not found' });
+        return;
+    }
+
+    // Get or create AI client for this session
+    var client = appState.aiClients[sessionId];
+    if (!client) {
+        // Load conversation history from database
+        var history = db.getSessionHistory(sessionId);
+        console.log('Loaded', history.length, 'messages from history for session', sessionId);
+
+        // Create save callback to persist messages to database
+        var saveCallback = function(role, content, toolCalls) {
+            db.addMessage(sessionId, role, content, toolCalls);
+        };
+
+        // Create wrapped eval callback that requests user approval
+        var evalCallbackWithApproval = function(code, callback) {
+            // Generate unique message ID for this code execution
+            var messageId = 'code_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+
+            // Store pending execution
+            appState.pendingCodeExecutions[messageId] = {
+                code: code,
+                callback: callback,
+                ws: ws
+            };
+
+            // Send code preview to client
+            sendToClient(ws, {
+                type: 'code_preview',
+                code: code,
+                messageId: messageId
+            });
+
+            // The callback will be called when user approves/rejects
+        };
+
+        // Create AI client with loaded history and save callback
+        client = aiClient.createAIClient(config, evalCallbackWithApproval, history, saveCallback);
+        appState.aiClients[sessionId] = client;
+    }
+
     // Step 2: Prompt - User gives task (already received)
     // Step 3: Decide - AI analyzes and generates Clojure code (handled by AI client)
     // Step 4: Request - AI calls eval_clojure (handled by AI client)
@@ -135,7 +238,7 @@ function handleUserMessage(userMessage, modelType, ws) {
     // Step 7: Update - Add result to conversation context (handled by AI client)
     // Step 8: Answer - AI synthesizes final response (handled by AI client)
 
-    appState.aiClient.sendMessage(userMessage, modelType, function(err, response) {
+    client.sendMessage(userMessage, modelType, function(err, response) {
         if (err) {
             console.error('AI client error:', err);
             sendToClient(ws, { type: 'error', message: err.message || String(err) });
@@ -201,6 +304,11 @@ function setupWebServer() {
     appState.wss.on('connection', function(ws) {
         console.log('WebSocket client connected');
 
+        // Generate and store session ID for this WebSocket connection
+        var sessionId = db.createSession();
+        ws.sessionId = sessionId;
+        console.log('Created session:', sessionId);
+
         sendToClient(ws, { type: 'status', message: 'Connected to server' });
 
         ws.on('message', function(message) {
@@ -210,6 +318,12 @@ function setupWebServer() {
                 switch (data.type) {
                     case 'user_message':
                         handleUserMessage(data.message, data.model, ws);
+                        break;
+                    case 'code_approved':
+                        handleCodeApproval(data.messageId, ws);
+                        break;
+                    case 'code_rejected':
+                        handleCodeRejection(data.messageId, ws);
                         break;
                     default:
                         console.log('Unknown message type:', data.type);
@@ -221,7 +335,26 @@ function setupWebServer() {
         });
 
         ws.on('close', function() {
-            console.log('WebSocket client disconnected');
+            console.log('WebSocket client disconnected, session:', ws.sessionId);
+
+            // Clean up pending code executions for this WebSocket
+            Object.keys(appState.pendingCodeExecutions).forEach(function(messageId) {
+                if (appState.pendingCodeExecutions[messageId].ws === ws) {
+                    console.log('Cleaning up pending execution:', messageId);
+                    var pending = appState.pendingCodeExecutions[messageId];
+                    // Call callback with error
+                    pending.callback(new Error('Connection closed'), null);
+                    delete appState.pendingCodeExecutions[messageId];
+                }
+            });
+
+            // Clean up AI client for this session from memory
+            if (ws.sessionId && appState.aiClients[ws.sessionId]) {
+                delete appState.aiClients[ws.sessionId];
+            }
+            // Note: We keep the session in the database for history
+            // Uncomment the line below if you want to delete sessions on disconnect:
+            // db.deleteSession(ws.sessionId);
         });
 
         ws.on('error', function(err) {
@@ -260,6 +393,10 @@ function cleanup(callback) {
         appState.nreplConnection.end();
         console.log('nREPL connection closed');
     }
+
+    // Close database connection
+    db.close();
+    console.log('Database connection closed');
 
     if (appState.nreplServerState && !appState.nreplServerState.external) {
         nreplServer.stop(appState.nreplServerState, function() {

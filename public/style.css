@@ -264,3 +264,132 @@ label {
     color: #d4d4d4;
 }
 
+/* Inline Status Messages */
+.status-message {
+    background: #2d2d30;
+    border-left: 3px solid #007acc;
+    padding: 0.75rem 1rem;
+    margin: 0.5rem 0;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    animation: slideIn 0.3s ease-out;
+}
+
+.status-message.thinking {
+    border-left-color: #007acc;
+}
+
+.status-message.executing {
+    border-left-color: #f9a825;
+}
+
+.status-message.waiting-approval {
+    border-left-color: #9c27b0;
+}
+
+@keyframes slideIn {
+    from {
+        opacity: 0;
+        transform: translateY(-10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.status-message .status-icon {
+    font-size: 1rem;
+    animation: pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+}
+
+.status-message .status-text {
+    color: #d4d4d4;
+    font-size: 0.9rem;
+}
+
+/* Inline Code Preview Card */
+.code-preview-card {
+    background: #2d2d30;
+    border: 1px solid #3a3a3c;
+    border-radius: 8px;
+    padding: 1rem;
+    margin: 0.75rem 0;
+    animation: slideIn 0.3s ease-out;
+}
+
+.code-preview-card .card-header {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.75rem;
+    color: #4ec9b0;
+    font-weight: 600;
+}
+
+.code-preview-card .code-display {
+    background: #1e1e1e;
+    border: 1px solid #3a3a3c;
+    border-radius: 4px;
+    padding: 1rem;
+    margin-bottom: 1rem;
+    overflow-x: auto;
+}
+
+.code-preview-card .code-display pre {
+    margin: 0;
+}
+
+.code-preview-card .code-display code {
+    font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+    font-size: 0.875rem;
+    line-height: 1.5;
+    color: #d4d4d4;
+    white-space: pre;
+}
+
+.code-preview-card .card-actions {
+    display: flex;
+    gap: 0.75rem;
+    justify-content: flex-end;
+}
+
+.code-preview-card .btn-success {
+    background: #28a745;
+    color: white;
+    border: none;
+    padding: 0.6rem 1.25rem;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.9rem;
+    transition: background 0.2s;
+    font-weight: 500;
+}
+
+.code-preview-card .btn-success:hover {
+    background: #218838;
+}
+
+.code-preview-card .btn-danger {
+    background: #dc3545;
+    color: white;
+    border: none;
+    padding: 0.6rem 1.25rem;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.9rem;
+    transition: background 0.2s;
+    font-weight: 500;
+}
+
+.code-preview-card .btn-danger:hover {
+    background: #c82333;
+}
+

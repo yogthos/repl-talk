@@ -35,12 +35,17 @@ function createEvalClojureTool(config) {
 
 /**
  * Create AI Client
+ * @param {Object} config - Configuration object
+ * @param {Function} evalCallback - Callback for executing Clojure code
+ * @param {Array} initialHistory - Optional initial conversation history
+ * @param {Function} saveCallback - Optional callback to save messages (sessionId, role, content, toolCalls)
  */
-function createAIClient(config, evalCallback) {
+function createAIClient(config, evalCallback, initialHistory, saveCallback) {
     var client = {
         config: config,
         evalCallback: evalCallback,
-        conversationHistory: []
+        conversationHistory: initialHistory || [],
+        saveCallback: saveCallback || null
     };
 
     /**
@@ -133,15 +138,40 @@ function createAIClient(config, evalCallback) {
                         role: 'tool',
                         tool_call_id: toolCall.id,
                         name: toolName,
-                        content: JSON.stringify({ error: err.message || String(err) })
+                        content: JSON.stringify({
+                            error: err.message || String(err),
+                            status: 'execution_failed'
+                        })
                     });
                 } else {
-                    callback(null, {
+                    // Check if result indicates an error and format it clearly for AI
+                    var toolResponse = {
                         role: 'tool',
                         tool_call_id: toolCall.id,
                         name: toolName,
-                        content: JSON.stringify(result)
-                    });
+                        content: null
+                    };
+
+                    if (result && result.type === 'error') {
+                        // Format error result with clear instructions for AI
+                        var errorResponse = {
+                            status: 'error',
+                            error: result.error,
+                            message: 'The code execution failed with an error. Please analyze the error and generate corrected code using eval_clojure again.',
+                            errorDetails: result.errorDetails || {},
+                            stdout: result.stdout || null,
+                            raw: result.raw || null
+                        };
+                        toolResponse.content = JSON.stringify(errorResponse);
+                    } else {
+                        // Success result
+                        toolResponse.content = JSON.stringify({
+                            status: 'success',
+                            result: result
+                        });
+                    }
+
+                    callback(null, toolResponse);
                 }
             });
         } else {
@@ -155,6 +185,43 @@ function createAIClient(config, evalCallback) {
     }
 
     /**
+     * Extract HTML from mixed text/HTML content
+     * Looks for HTML document or HTML tags within text
+     */
+    function extractHTML(content) {
+        if (!content || typeof content !== 'string') {
+            return null;
+        }
+
+        // Check if content starts with HTML already
+        var trimmed = content.trim();
+        if (trimmed.startsWith('<!DOCTYPE') || trimmed.startsWith('<html')) {
+            return content;
+        }
+
+        // Look for HTML document within the content
+        var doctypeMatch = content.match(/(<!DOCTYPE[\s\S]*)/i);
+        if (doctypeMatch) {
+            return doctypeMatch[1];
+        }
+
+        // Look for <html> tag within the content
+        var htmlMatch = content.match(/(<html[\s\S]*)/i);
+        if (htmlMatch) {
+            return htmlMatch[1];
+        }
+
+        // Look for substantial HTML structure (div/body/etc with content)
+        var structureMatch = content.match(/(<(?:div|body|section|article|main)[^>]*>[\s\S]*)/i);
+        if (structureMatch) {
+            return structureMatch[1];
+        }
+
+        // If no HTML found, return null
+        return null;
+    }
+
+    /**
      * Process AI response and handle tool calls
      */
     function processAIResponse(response, modelType, callback) {
@@ -164,11 +231,17 @@ function createAIClient(config, evalCallback) {
         }
 
         // Add assistant message to history
-        client.conversationHistory.push({
+        var assistantMsg = {
             role: 'assistant',
             content: message.content,
             tool_calls: message.tool_calls
-        });
+        };
+        client.conversationHistory.push(assistantMsg);
+
+        // Save to database if save callback is provided
+        if (client.saveCallback) {
+            client.saveCallback('assistant', message.content, message.tool_calls);
+        }
 
         // If there are tool calls, execute them
         if (message.tool_calls && message.tool_calls.length > 0) {
@@ -186,6 +259,12 @@ function createAIClient(config, evalCallback) {
 
                     toolResults.push(result);
                     client.conversationHistory.push(result);
+
+                    // Save tool result to database if save callback is provided
+                    if (client.saveCallback) {
+                        client.saveCallback('tool', JSON.stringify(result), null);
+                    }
+
                     completed++;
 
                     // When all tool calls are done, make another request with results
@@ -203,10 +282,28 @@ function createAIClient(config, evalCallback) {
                 role: 'assistant'
             };
 
-            // Detect if content is HTML
-            if (message.content && resultHandler.isHTML(message.content)) {
+            // Try to extract HTML from the content (handles mixed text/HTML)
+            var extractedHTML = null;
+            if (message.content) {
+                extractedHTML = extractHTML(message.content);
+            }
+
+            // Detect if content is HTML (either pure or extracted)
+            if (extractedHTML) {
+                console.log('AI response contains HTML (extracted), content length:', extractedHTML.length);
+                console.log('Extracted HTML preview:', extractedHTML.substring(0, 300));
+                response.type = 'html';
+                response.html = extractedHTML;
+            } else if (message.content && resultHandler.isHTML(message.content)) {
+                console.log('AI response detected as HTML (pure), content length:', message.content.length);
+                console.log('HTML content preview:', message.content.substring(0, 300));
                 response.type = 'html';
                 response.html = message.content;
+            } else {
+                console.log('AI response not detected as HTML');
+                if (message.content) {
+                    console.log('Content preview:', message.content.substring(0, 200));
+                }
             }
 
             callback(null, response);
@@ -239,10 +336,16 @@ function createAIClient(config, evalCallback) {
      */
     client.sendMessage = function(userMessage, modelType, callback) {
         // Add user message to history
-        client.conversationHistory.push({
+        var userMsg = {
             role: 'user',
             content: userMessage
-        });
+        };
+        client.conversationHistory.push(userMsg);
+
+        // Save to database if save callback is provided
+        if (client.saveCallback) {
+            client.saveCallback('user', userMessage, null);
+        }
 
         var endpointInfo = getEndpoint(modelType || client.config.ai.defaultModel);
 

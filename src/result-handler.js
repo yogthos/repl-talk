@@ -211,9 +211,16 @@ function parseClojureValue(str) {
  */
 function isHTML(str) {
     if (typeof str !== 'string') return false;
-    // Check for common HTML tags
-    var htmlTagPattern = /<\/?[a-z][\s\S]*>/i;
-    return htmlTagPattern.test(str);
+    // Check for actual HTML tags (not just any < followed by letter)
+    // Must have opening tag with valid HTML tag name, and optionally closing tag
+    // This prevents false positives from Clojure code like (< or (> or (<! etc.
+    var htmlTagPattern = /<\/?[a-z][a-z0-9]*[\s\S]*?>/i;
+    // Also check for common HTML structure patterns
+    var hasHtmlStructure = /<(html|head|body|div|span|p|table|ul|ol|h[1-6]|a|img|button|form|input)[\s>]/i.test(str);
+    // Must have at least one complete HTML tag (opening or self-closing)
+    var hasCompleteTag = /<[a-z][a-z0-9]*[\s\S]*?(\/>|>)/i.test(str);
+
+    return (htmlTagPattern.test(str) || hasHtmlStructure) && hasCompleteTag;
 }
 
 /**
@@ -289,6 +296,29 @@ function formatForVisualization(result) {
         stdout: result.stdout,
         error: result.error
     };
+
+    // Enhanced error formatting for AI consumption
+    if (result.type === 'error' && result.error) {
+        // Add structured error information to help AI understand and fix
+        formatted.errorDetails = {
+            message: result.error,
+            isRetryable: true,
+            context: 'Code execution failed. Analyze the error and generate corrected code.'
+        };
+
+        // Provide hints based on error patterns
+        if (result.error.includes('IllegalArgumentException')) {
+            formatted.errorDetails.hint = 'Type mismatch error. Check data types and conversions.';
+        } else if (result.error.includes('FileNotFoundException') || result.error.includes('No such file')) {
+            formatted.errorDetails.hint = 'File or path not found. Verify the path exists.';
+        } else if (result.error.includes('ClassNotFoundException') || result.error.includes('Could not locate')) {
+            formatted.errorDetails.hint = 'Missing dependency. Add proper require statement.';
+        } else if (result.error.includes('CompilerException') || result.error.includes('Syntax error')) {
+            formatted.errorDetails.hint = 'Syntax error. Review Clojure syntax.';
+        } else if (result.error.includes('ArityException')) {
+            formatted.errorDetails.hint = 'Wrong number of arguments. Check function signature.';
+        }
+    }
 
     // Add visualization hints based on type
     switch (result.type) {
