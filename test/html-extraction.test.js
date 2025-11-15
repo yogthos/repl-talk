@@ -80,96 +80,95 @@ function extractHTML(content) {
     return null;
 }
 
-test.describe('HTML Extraction Tests', function() {
-
-    test.describe('Pure HTML (no commentary)', function() {
-        test('should preserve complete HTML documents', function() {
+test('HTML Extraction Tests', function(t) {
+    t.test('Pure HTML (no commentary)', function(t2) {
+        t2.test('should preserve complete HTML documents', function() {
             var input = '<!DOCTYPE html><html><head><title>Test</title></head><body><h1>Hello</h1></body></html>';
             var result = extractHTML(input);
             assert.strictEqual(result, input);
         });
 
-        test('should preserve HTML starting with <html>', function() {
+        t2.test('should preserve HTML starting with <html>', function() {
             var input = '<html><body><p>Content</p></body></html>';
             var result = extractHTML(input);
             assert.strictEqual(result, input);
         });
 
-        test('should preserve HTML starting with <div>', function() {
+        t2.test('should preserve HTML starting with <div>', function() {
             var input = '<div class="container"><p>Content</p></div>';
             var result = extractHTML(input);
             assert.strictEqual(result, input);
         });
 
-        test('should preserve HTML tables', function() {
+        t2.test('should preserve HTML tables', function() {
             var input = '<table><thead><tr><th>Name</th><th>Age</th></tr></thead><tbody><tr><td>John</td><td>30</td></tr></tbody></table>';
             var result = extractHTML(input);
             assert.strictEqual(result, input);
         });
     });
 
-    test.describe('HTML with commentary before', function() {
-        test('should strip "Now I\'ll create" commentary', function() {
+    t.test('HTML with commentary before', function(t2) {
+        t2.test('should strip "Now I\'ll create" commentary', function() {
             var input = 'Now I\'ll create an HTML table to display the files:<table><tr><td>Test</td></tr></table>';
             var result = extractHTML(input);
             assert.strictEqual(result, '<table><tr><td>Test</td></tr></table>');
         });
 
-        test('should strip "Here\'s" commentary', function() {
+        t2.test('should strip "Here\'s" commentary', function() {
             var input = 'Here\'s the result:<div><p>Content</p></div>';
             var result = extractHTML(input);
             assert.strictEqual(result, '<div><p>Content</p></div>');
         });
 
-        test('should strip "Let me create" commentary', function() {
+        t2.test('should strip "Let me create" commentary', function() {
             var input = 'Let me create a visualization:<div>Data</div>';
             var result = extractHTML(input);
             assert.strictEqual(result, '<div>Data</div>');
         });
 
-        test('should extract HTML from mixed content with DOCTYPE', function() {
+        t2.test('should extract HTML from mixed content with DOCTYPE', function() {
             var input = 'Some explanatory text here\n<!DOCTYPE html><html><body>Content</body></html>';
             var result = extractHTML(input);
             assert.strictEqual(result, '<!DOCTYPE html><html><body>Content</body></html>');
         });
     });
 
-    test.describe('HTML with tool call markers', function() {
-        test('should remove tool call markers', function() {
+    t.test('HTML with tool call markers', function(t2) {
+        t2.test('should remove tool call markers', function() {
             var input = '<｜tool▁calls▁begin｜><table><tr><td>Test</td></tr></table><｜tool▁calls▁end｜>';
             var result = extractHTML(input);
             assert.strictEqual(result, '<table><tr><td>Test</td></tr></table>');
         });
 
-        test('should remove tool_sep markers', function() {
+        t2.test('should remove tool_sep markers', function() {
             var input = 'Text<｜tool▁sep｜><div>Content</div>';
             var result = extractHTML(input);
             assert.strictEqual(result, '<div>Content</div>');
         });
 
-        test('should remove special Unicode characters', function() {
+        t2.test('should remove special Unicode characters', function() {
             var input = '｜▁<table><tr><td>Test</td></tr></table>▁｜';
             var result = extractHTML(input);
             assert.strictEqual(result, '<table><tr><td>Test</td></tr></table>');
         });
     });
 
-    test.describe('HTML with commentary after', function() {
-        test('should extract only the HTML portion and remove trailing text', function() {
+    t.test('HTML with commentary after', function(t2) {
+        t2.test('should extract only the HTML portion and remove trailing text', function() {
             var input = '<div><p>Content</p></div> And here is some extra text that should be removed.';
             var result = extractHTML(input);
             assert.strictEqual(result, '<div><p>Content</p></div>');
         });
 
-        test('should handle table with trailing commentary', function() {
+        t2.test('should handle table with trailing commentary', function() {
             var input = '<table><tr><td>Data</td></tr></table> This table shows the results.';
             var result = extractHTML(input);
             assert.strictEqual(result, '<table><tr><td>Data</td></tr></table>');
         });
     });
 
-    test.describe('Complex mixed content', function() {
-        test('should extract HTML from commentary + markers + HTML + commentary', function() {
+    t.test('Complex mixed content', function(t2) {
+        t2.test('should extract HTML from commentary + markers + HTML + commentary', function() {
             var input = 'Now I\'ll create an HTML table:<｜tool▁calls▁begin｜><table><thead><tr><th>Name</th></tr></thead><tbody><tr><td>John</td></tr></tbody></table><｜tool▁calls▁end｜> This shows the data.';
             var result = extractHTML(input);
             assert.ok(result.includes('<table>'), 'Should contain table tag');
@@ -178,56 +177,56 @@ test.describe('HTML Extraction Tests', function() {
             assert.ok(!result.includes('｜'), 'Should not contain tool markers');
         });
 
-        test('should handle nested HTML structures', function() {
+        t2.test('should handle nested HTML structures', function() {
             var input = 'Commentary: <div class="outer"><div class="inner"><p>Nested content</p></div></div>';
             var result = extractHTML(input);
             assert.strictEqual(result, '<div class="outer"><div class="inner"><p>Nested content</p></div></div>');
         });
     });
 
-    test.describe('Edge cases', function() {
-        test('should return null for null input', function() {
+    t.test('Edge cases', function(t2) {
+        t2.test('should return null for null input', function() {
             var result = extractHTML(null);
             assert.strictEqual(result, null);
         });
 
-        test('should return null for undefined input', function() {
+        t2.test('should return null for undefined input', function() {
             var result = extractHTML(undefined);
             assert.strictEqual(result, null);
         });
 
-        test('should return null for empty string', function() {
+        t2.test('should return null for empty string', function() {
             var result = extractHTML('');
             assert.strictEqual(result, null);
         });
 
-        test('should return null for text with no HTML', function() {
+        t2.test('should return null for text with no HTML', function() {
             var result = extractHTML('Just plain text with no HTML tags');
             assert.strictEqual(result, null);
         });
 
-        test('should handle single self-closing tags', function() {
+        t2.test('should handle single self-closing tags', function() {
             var input = '<img src="test.jpg" />';
             var result = extractHTML(input);
             assert.strictEqual(result, '<img src="test.jpg" />');
         });
 
-        test('should handle HTML with inline styles', function() {
+        t2.test('should handle HTML with inline styles', function() {
             var input = '<div style="color: red; padding: 10px;"><p>Styled content</p></div>';
             var result = extractHTML(input);
             assert.strictEqual(result, input);
         });
     });
 
-    test.describe('Real-world example from bug report', function() {
-        test('should extract clean HTML from the reported issue', function() {
+    t.test('Real-world example from bug report', function(t2) {
+        t2.test('should extract clean HTML from the reported issue', function() {
             var input = 'Now I\'ll create an HTML table to display the files in a nicely formatted way:<｜tool▁calls▁begin｜><｜tool▁call▁begin｜>eval_clojure<｜tool▁sep｜>{"code_string": "..."}<｜tool▁call▁end｜><｜tool▁calls▁end｜>';
             var result = extractHTML(input);
             // Since there's no actual HTML in this example, it should return null
             assert.strictEqual(result, null);
         });
 
-        test('should handle actual HTML response after tool execution', function() {
+        t2.test('should handle actual HTML response after tool execution', function() {
             // This simulates what the AI should return after tool execution
             var input = '<table style="border-collapse: collapse; width: 100%;"><thead><tr><th>Name</th><th>Type</th></tr></thead><tbody><tr><td>file.txt</td><td>File</td></tr></tbody></table>';
             var result = extractHTML(input);

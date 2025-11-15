@@ -253,14 +253,19 @@ function createAIClient(config, evalCallback, initialHistory, saveCallback, stat
                             errorDetails: result.errorDetails || {},
                             validationErrors: result.validationErrors || null,
                             stdout: result.stdout || null,
+                            stderr: result.stderr || null,
+                            logs: result.logs || [],
+                            executionTime: result.executionTime || null,
                             raw: result.raw || null
                         };
                         toolResponse.content = JSON.stringify(errorResponse);
                     } else {
-                        // Success result
+                        // Success result - include logs for observability
                         toolResponse.content = JSON.stringify({
                             status: 'success',
-                            result: result
+                            result: result,
+                            logs: result.logs || [],
+                            executionTime: result.executionTime || null
                         });
                     }
 
@@ -603,10 +608,15 @@ function createAIClient(config, evalCallback, initialHistory, saveCallback, stat
         var sanitizedHistory = sanitizeHistory(client.conversationHistory);
 
         // Prepare messages with system prompt from config (same as sendMessage)
+        // Merge code-mode prompt template if available
+        var systemPromptContent = client.config.ai.systemPrompt;
+        if (client.config.ai.codeModePromptTemplate) {
+            systemPromptContent = systemPromptContent + '\n\n' + client.config.ai.codeModePromptTemplate;
+        }
         var messages = [
             {
                 role: 'system',
-                content: client.config.ai.systemPrompt
+                content: systemPromptContent
             }
         ].concat(sanitizedHistory);
 
@@ -662,10 +672,15 @@ function createAIClient(config, evalCallback, initialHistory, saveCallback, stat
         var sanitizedHistory = sanitizeHistory(client.conversationHistory);
 
         // Prepare messages with system prompt from config
+        // Merge code-mode prompt template if available
+        var systemPromptContent = client.config.ai.systemPrompt;
+        if (client.config.ai.codeModePromptTemplate) {
+            systemPromptContent = systemPromptContent + '\n\n' + client.config.ai.codeModePromptTemplate;
+        }
         var messages = [
             {
                 role: 'system',
-                content: client.config.ai.systemPrompt
+                content: systemPromptContent
             }
         ].concat(sanitizedHistory);
 

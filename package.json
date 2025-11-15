@@ -5,7 +5,7 @@
     "main": "src/app.js",
     "scripts": {
       "start": "node src/app.js",
-      "test": "node --test test/repl-loop.test.js test/db-history.test.js test/html-extraction.test.js"
+      "test": "NODE_OPTIONS='--no-warnings' node --test --test-reporter=spec --test-timeout=60000 test/repl-loop.test.js test/db-history.test.js test/html-extraction.test.js test/log-capture.test.js test/clojure-discovery.test.js test/observability.test.js test/code-mode-integration.test.js"
     },
     "keywords": [
       "Clojure",

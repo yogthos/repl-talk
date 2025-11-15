@@ -19,7 +19,8 @@ var testState = {
     nreplServerState: null,
     nreplConnection: null,
     nreplSession: null,
-    aiClientInstance: null
+    aiClientInstance: null,
+    setupComplete: false
 };
 
 /**
@@ -55,8 +56,17 @@ function setup(callback) {
 
         testState.nreplConnection = nreplClient.connect(clientOptions);
 
+        var connectionTimeout = setTimeout(function() {
+            if (!testState.nreplSession) {
+                console.error('Connection timeout - nREPL connection did not establish');
+                callback(new Error('nREPL connection timeout'));
+            }
+        }, 30000);
+
         testState.nreplConnection.on('error', function(err) {
             console.error('nREPL connection error:', err);
+            clearTimeout(connectionTimeout);
+            callback(err);
         });
 
         testState.nreplConnection.once('connect', function() {
@@ -64,6 +74,7 @@ function setup(callback) {
 
             // Create a session
             testState.nreplConnection.clone(function(err, messages) {
+                clearTimeout(connectionTimeout);
                 if (err) {
                     console.error('Failed to create nREPL session:', err);
                     return callback(err);
@@ -73,6 +84,8 @@ function setup(callback) {
                 if (newSession) {
                     testState.nreplSession = newSession;
                     console.log('Created nREPL session:', newSession);
+                } else {
+                    console.warn('Warning: No new-session in clone response');
                 }
 
                 // Create eval callback for AI client
@@ -87,7 +100,8 @@ function setup(callback) {
                         }
 
                         // Serialize result
-                        var result = resultHandler.serializeResult(messages);
+                        var executionTime = Date.now() - Date.now(); // 0 for test
+                        var result = resultHandler.serializeResult(messages, executionTime);
                         var formatted = resultHandler.formatForVisualization(result);
 
                         callback(null, formatted);
@@ -97,6 +111,8 @@ function setup(callback) {
                 // Create AI client with eval callback
                 testState.aiClientInstance = aiClient.createAIClient(config, evalClojure, [], null, null);
 
+                console.log('Setup complete - nREPL ready');
+                testState.setupComplete = true;
                 callback(null);
             });
         });
@@ -124,28 +140,52 @@ function teardown(callback) {
     }
 }
 
-// Test suite
-test.describe('REPL Loop Tests', function() {
-    test.before(function() {
+// Helper to flush output
+function flushOutput() {
+    if (process.stdout.write) {
+        process.stdout.write('');
+    }
+    if (process.stderr.write) {
+        process.stderr.write('');
+    }
+}
+
+// Test suite with before/after hooks
+var testSuite = test('REPL Loop Tests', {
+    before: function() {
+        console.log('BEFORE HOOK CALLED - Starting setup...');
+        flushOutput();
         return new Promise(function(resolve, reject) {
+            console.log('BEFORE HOOK - Calling setup function...');
             setup(function(err) {
-                if (err) reject(err);
-                else resolve();
+                flushOutput();
+                if (err) {
+                    console.error('BEFORE HOOK - Setup failed:', err);
+                    reject(err);
+                } else {
+                    console.log('BEFORE HOOK - Setup completed successfully');
+                    resolve();
+                }
             });
         });
-    });
-
-    test.after(function() {
+    },
+    after: function() {
+        flushOutput();
         return new Promise(function(resolve) {
             teardown(function() {
+                flushOutput();
                 resolve();
             });
         });
-    });
+    }
+}, function(t) {
 
     // Test 1: Direct nREPL evaluation
-    test('nREPL can evaluate simple Clojure code', function() {
+    t.test('nREPL can evaluate simple Clojure code', function() {
         return new Promise(function(resolve, reject) {
+            if (!testState.setupComplete || !testState.nreplConnection || !testState.nreplSession) {
+                return reject(new Error('nREPL not initialized - setup may not have completed'));
+            }
             var code = '(+ 1 2)';
             testState.nreplConnection.eval(code, undefined, testState.nreplSession, function(err, messages) {
                 if (err) {
@@ -158,7 +198,8 @@ test.describe('REPL Loop Tests', function() {
                     console.log('nREPL messages for (+ 1 2):', JSON.stringify(messages, null, 2));
                 }
 
-                var result = resultHandler.serializeResult(messages);
+                var executionTime = Date.now() - Date.now(); // 0 for test
+                var result = resultHandler.serializeResult(messages, executionTime);
 
                 // Debug: log result if needed
                 if (process.env.DEBUG_TESTS) {
@@ -194,8 +235,11 @@ test.describe('REPL Loop Tests', function() {
     });
 
     // Test 2: nREPL file listing
-    test('nREPL can list files using babashka.fs', function() {
+    t.test('nREPL can list files using babashka.fs', function() {
         return new Promise(function(resolve, reject) {
+            if (!testState.setupComplete || !testState.nreplConnection || !testState.nreplSession) {
+                return reject(new Error('nREPL not initialized - setup may not have completed'));
+            }
             var code = '(require \'[babashka.fs :as fs])\n(map str (fs/list-dir "."))';
             testState.nreplConnection.eval(code, undefined, testState.nreplSession, function(err, messages) {
                 if (err) {
@@ -203,7 +247,8 @@ test.describe('REPL Loop Tests', function() {
                     return;
                 }
 
-                var result = resultHandler.serializeResult(messages);
+                var executionTime = Date.now() - Date.now(); // 0 for test
+                var result = resultHandler.serializeResult(messages, executionTime);
                 assert.ok(result, 'Result should exist');
 
                 // Check if we got an error
@@ -223,12 +268,12 @@ test.describe('REPL Loop Tests', function() {
     });
 
     // Test 3: Result handler serialization
-    test('Result handler properly serializes nREPL messages', function() {
+    t.test('Result handler properly serializes nREPL messages', function() {
         // Test with mock nREPL messages
         var mockMessages = [
             { value: '3', status: ['done'] }
         ];
-        var result = resultHandler.serializeResult(mockMessages);
+        var result = resultHandler.serializeResult(mockMessages, 0);
         assert.ok(result, 'Result should exist');
         assert.strictEqual(result.type, 'number', 'Result type should be number');
         assert.strictEqual(result.value, 3, 'Result value should be 3');
@@ -237,15 +282,18 @@ test.describe('REPL Loop Tests', function() {
         var errorMessages = [
             { err: 'Error message', status: ['done', 'error'] }
         ];
-        var errorResult = resultHandler.serializeResult(errorMessages);
+        var errorResult = resultHandler.serializeResult(errorMessages, 0);
         assert.ok(errorResult, 'Error result should exist');
         assert.strictEqual(errorResult.type, 'error', 'Error result type should be error');
         assert.ok(errorResult.error, 'Error result should have error message');
     });
 
     // Test 4: AI client generates code for file listing
-    test('AI client generates Clojure code for file listing request', function() {
+    t.test('AI client generates Clojure code for file listing request', function() {
         return new Promise(function(resolve, reject) {
+            if (!testState.setupComplete || !testState.aiClientInstance) {
+                return reject(new Error('AI client not initialized - setup may not have completed'));
+            }
             var userMessage = 'list files in current directory';
             var codeGenerated = false;
             var generatedCode = null;
@@ -287,8 +335,11 @@ test.describe('REPL Loop Tests', function() {
     });
 
     // Test 5: Full integration test - complete REPL loop
-    test('Full REPL loop: user message → AI → nREPL → result', function() {
+    t.test('Full REPL loop: user message → AI → nREPL → result', function() {
         return new Promise(function(resolve, reject) {
+            if (!testState.setupComplete || !testState.aiClientInstance) {
+                return reject(new Error('AI client not initialized - setup may not have completed'));
+            }
             var userMessage = 'list files in current directory';
             var steps = {
                 aiCalled: false,
@@ -349,10 +400,13 @@ test.describe('REPL Loop Tests', function() {
     });
 
     // Test 6: Error handling
-    test('Error handling: invalid Clojure code', function() {
+    t.test('Error handling: invalid Clojure code', function() {
         return new Promise(function(resolve, reject) {
+            if (!testState.setupComplete || !testState.nreplConnection || !testState.nreplSession) {
+                return reject(new Error('nREPL not initialized - setup may not have completed'));
+            }
             var invalidCode = '(invalid syntax here';
-            testState.nreplConnection.eval(invalidCode, testState.nreplSession, function(err, messages) {
+            testState.nreplConnection.eval(invalidCode, undefined, testState.nreplSession, function(err, messages) {
                 if (err) {
                     // Connection error
                     assert.ok(err, 'Should have error for invalid code');
@@ -361,7 +415,8 @@ test.describe('REPL Loop Tests', function() {
                 }
 
                 // Check if nREPL returned error in messages
-                var result = resultHandler.serializeResult(messages);
+                var executionTime = Date.now() - Date.now(); // 0 for test
+                var result = resultHandler.serializeResult(messages, executionTime);
 
                 // Either we get an error type or the result indicates failure
                 if (result.type === 'error') {
@@ -377,33 +432,33 @@ test.describe('REPL Loop Tests', function() {
     });
 
     // Test 7: Test result handler with various result types
-    test('Result handler handles various result types', function() {
+    t.test('Result handler handles various result types', function() {
         // Test string result
         var stringMessages = [{ value: '"hello"', status: ['done'] }];
-        var stringResult = resultHandler.serializeResult(stringMessages);
+        var stringResult = resultHandler.serializeResult(stringMessages, 0);
         assert.strictEqual(stringResult.type, 'string', 'String result type');
         assert.strictEqual(stringResult.value, 'hello', 'String result value');
 
         // Test list result
         var listMessages = [{ value: '["a" "b" "c"]', status: ['done'] }];
-        var listResult = resultHandler.serializeResult(listMessages);
+        var listResult = resultHandler.serializeResult(listMessages, 0);
         assert.ok(listResult, 'List result should exist');
         // Note: Simple parser may not handle complex structures perfectly
 
         // Test null result
         var nullMessages = [{ value: 'nil', status: ['done'] }];
-        var nullResult = resultHandler.serializeResult(nullMessages);
+        var nullResult = resultHandler.serializeResult(nullMessages, 0);
         assert.strictEqual(nullResult.type, 'null', 'Null result type');
         assert.strictEqual(nullResult.value, null, 'Null result value');
     });
 
     // Test 8: Improved error handling - "class " error case
-    test('Result handler properly handles incomplete error messages like "class "', function() {
+    t.test('Result handler properly handles incomplete error messages like "class "', function() {
         // Test the "class " error case
         var classErrorMessages = [
             { ex: 'class ', status: ['done', 'error'] }
         ];
-        var errorResult = resultHandler.serializeResult(classErrorMessages);
+        var errorResult = resultHandler.serializeResult(classErrorMessages, 0);
         assert.ok(errorResult, 'Error result should exist');
         assert.strictEqual(errorResult.type, 'error', 'Error result type should be error');
         assert.ok(errorResult.error, 'Error result should have error message');
@@ -414,7 +469,7 @@ test.describe('REPL Loop Tests', function() {
         var rootCauseMessages = [
             { 'root-cause': 'java.lang.ClassNotFoundException: SomeClass', status: ['done', 'error'] }
         ];
-        var rootCauseResult = resultHandler.serializeResult(rootCauseMessages);
+        var rootCauseResult = resultHandler.serializeResult(rootCauseMessages, 0);
         assert.ok(rootCauseResult, 'Root cause result should exist');
         assert.strictEqual(rootCauseResult.type, 'error', 'Root cause result type should be error');
         assert.ok(rootCauseResult.rootCause, 'Root cause should be captured');
@@ -425,10 +480,13 @@ test.describe('REPL Loop Tests', function() {
         var combinedMessages = [
             { ex: 'class ', 'root-cause': 'Actual error message', status: ['done', 'error'] }
         ];
-        var combinedResult = resultHandler.serializeResult(combinedMessages);
+        var combinedResult = resultHandler.serializeResult(combinedMessages, 0);
         assert.ok(combinedResult, 'Combined result should exist');
         assert.strictEqual(combinedResult.type, 'error', 'Combined result type should be error');
         assert.ok(combinedResult.error, 'Combined result should have error message');
     });
 });
+
+// Export for test runner
+module.exports = testSuite;
 

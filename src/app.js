@@ -18,6 +18,7 @@ var aiClient = require('./ai-client');
 var resultHandler = require('./result-handler');
 var db = require('./db');
 var codeValidator = require('./code-validator');
+var clojureHelpers = require('./clojure-helpers');
 
 // Application state
 var appState = {
@@ -82,13 +83,26 @@ function initialize(callback) {
                 if (newSession) {
                     appState.nreplSession = newSession;
                     console.log('Created nREPL session:', newSession);
+
+                    // Inject helper functions into the session
+                    var helperCode = clojureHelpers.getHelperFunctionsCode();
+                    appState.nreplConnection.eval(helperCode, 'user', newSession, function(err, helperMessages) {
+                        if (err) {
+                            console.warn('Warning: Failed to inject helper functions:', err);
+                        } else {
+                            console.log('Helper functions injected into nREPL session');
+                        }
+
+                        // Note: AI clients are now created per-session in handleUserMessage
+                        // We no longer create a global AI client here
+
+                        broadcastToClients({ type: 'connection', message: 'Connected to nREPL' });
+                        callback(null);
+                    });
+                } else {
+                    broadcastToClients({ type: 'connection', message: 'Connected to nREPL' });
+                    callback(null);
                 }
-
-                // Note: AI clients are now created per-session in handleUserMessage
-                // We no longer create a global AI client here
-
-                broadcastToClients({ type: 'connection', message: 'Connected to nREPL' });
-                callback(null);
             });
         });
     });
@@ -152,17 +166,23 @@ function evalClojure(codeString, callback) {
     }
 
     function executeCode() {
+        var startTime = Date.now();
         appState.nreplConnection.eval(codeString, undefined, appState.nreplSession, function(err, messages) {
             if (err) {
                 console.error('nREPL eval error:', err);
                 return callback(err, null);
             }
 
-            // Serialize result
-            var result = resultHandler.serializeResult(messages);
+            var executionTime = Date.now() - startTime;
+
+            // Serialize result with execution time
+            var result = resultHandler.serializeResult(messages, executionTime);
             var formatted = resultHandler.formatForVisualization(result);
 
             console.log('Evaluation result:', formatted);
+            if (formatted.logs && formatted.logs.length > 0) {
+                console.log('Execution logs:', formatted.logs.length, 'entries');
+            }
 
             // Do NOT broadcast tool results to canvas - only final AI responses should be displayed
             // Tool results are passed to AI client callback for processing into final HTML response

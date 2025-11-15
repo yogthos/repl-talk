@@ -8,10 +8,13 @@
 /**
  * Serialize Clojure result from nREPL to JSON
  * Handles maps, lists, strings, numbers, keywords, etc.
+ * @param {Array} nreplMessages - Array of nREPL messages
+ * @param {number} executionTime - Execution time in milliseconds (optional)
+ * @returns {Object} Serialized result with structured logs
  */
-function serializeResult(nreplMessages) {
+function serializeResult(nreplMessages, executionTime) {
     if (!nreplMessages || nreplMessages.length === 0) {
-        return { value: null, error: null, type: 'null' };
+        return { value: null, error: null, type: 'null', logs: [], executionTime: executionTime };
     }
 
     // Extract value and error from nREPL messages
@@ -22,6 +25,8 @@ function serializeResult(nreplMessages) {
     var rootCause = null;
     var rootEx = null;
     var stackTrace = null;
+    var logs = [];
+    var timestamp = new Date().toISOString();
 
     var hasErrorStatus = false;
 
@@ -31,9 +36,33 @@ function serializeResult(nreplMessages) {
         }
         if (msg.err) {
             err += msg.err;
+            // Add stderr messages as ERROR level logs
+            var errLines = msg.err.split('\n').filter(function(line) { return line.trim(); });
+            errLines.forEach(function(line) {
+                logs.push({
+                    level: 'ERROR',
+                    message: line,
+                    timestamp: timestamp
+                });
+            });
         }
         if (msg.out) {
             out += msg.out;
+            // Add stdout messages as INFO level logs
+            // Check for WARN patterns
+            var outLines = msg.out.split('\n').filter(function(line) { return line.trim(); });
+            outLines.forEach(function(line) {
+                var level = 'INFO';
+                // Detect WARN patterns (case-insensitive)
+                if (/warn/i.test(line) || /warning/i.test(line)) {
+                    level = 'WARN';
+                }
+                logs.push({
+                    level: level,
+                    message: line,
+                    timestamp: timestamp
+                });
+            });
         }
         // Check status first to determine if this is an error
         if (msg.status && msg.status.indexOf('error') > -1) {
@@ -113,7 +142,9 @@ function serializeResult(nreplMessages) {
             stderr: err || undefined,
             rootCause: rootCause || undefined,
             rootEx: rootEx || undefined,
-            stackTrace: stackTrace || undefined
+            stackTrace: stackTrace || undefined,
+            logs: logs,
+            executionTime: executionTime
         };
     }
 
@@ -156,7 +187,10 @@ function serializeResult(nreplMessages) {
         raw: value,
         type: resultType,
         stdout: out || undefined,
-        parseError: parseError || undefined
+        stderr: err || undefined,
+        parseError: parseError || undefined,
+        logs: logs,
+        executionTime: executionTime
     };
 }
 
@@ -520,7 +554,10 @@ function formatForVisualization(result) {
         data: result.value,
         raw: result.raw,
         stdout: result.stdout,
-        error: result.error
+        stderr: result.stderr,
+        error: result.error,
+        logs: result.logs || [],
+        executionTime: result.executionTime
     };
 
     // Enhanced error formatting for AI consumption

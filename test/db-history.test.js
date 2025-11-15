@@ -70,15 +70,18 @@ function setup(callback) {
         testState.nreplConnection.once('connect', function() {
             console.log('Connected to nREPL server');
 
-            // Create nREPL session
-            testState.nreplConnection.newSession(function(err, newSession) {
+            // Create nREPL session using clone (newSession doesn't exist)
+            testState.nreplConnection.clone(function(err, messages) {
                 if (err) {
                     console.error('Failed to create nREPL session:', err);
                     return callback(err);
                 }
 
-                testState.nreplSession = newSession;
-                console.log('Created nREPL session:', newSession);
+                var newSession = messages && messages[0] && messages[0]['new-session'];
+                if (newSession) {
+                    testState.nreplSession = newSession;
+                    console.log('Created nREPL session:', newSession);
+                }
                 callback(null);
             });
         });
@@ -124,27 +127,41 @@ function teardown(callback) {
     }
 }
 
-// Test suite
-test.describe('Database Chat History Tests', function() {
-    test.before(function() {
+// Helper to flush output
+function flushOutput() {
+    if (process.stdout.write) {
+        process.stdout.write('');
+    }
+    if (process.stderr.write) {
+        process.stderr.write('');
+    }
+}
+
+// Test suite with before/after hooks
+var testSuite = test('Database Chat History Tests', {
+    before: function() {
+        flushOutput();
         return new Promise(function(resolve, reject) {
             setup(function(err) {
+                flushOutput();
                 if (err) reject(err);
                 else resolve();
             });
         });
-    });
-
-    test.after(function() {
+    },
+    after: function() {
+        flushOutput();
         return new Promise(function(resolve) {
             teardown(function() {
+                flushOutput();
                 resolve();
             });
         });
-    });
+    }
+}, function(t) {
 
     // Test 1: Create session and save messages
-    test('Create session and save messages to database', function() {
+    t.test('Create session and save messages to database', function() {
         var sessionId = db.createSession();
         testState.testSessions.push(sessionId);
         assert.ok(sessionId, 'Session ID should be generated');
@@ -201,7 +218,7 @@ test.describe('Database Chat History Tests', function() {
     });
 
     // Test 2: Load conversation history and create AI client with it
-    test('Load conversation history and create AI client with history', function() {
+    t.test('Load conversation history and create AI client with history', function() {
         var sessionId = db.createSession();
         testState.testSessions.push(sessionId);
 
@@ -239,7 +256,7 @@ test.describe('Database Chat History Tests', function() {
     });
 
     // Test 3: Verify messages are saved when AI client processes messages
-    test('AI client saves messages to database via save callback', function() {
+    t.test('AI client saves messages to database via save callback', function() {
         var sessionId = db.createSession();
         testState.testSessions.push(sessionId);
         var savedMessages = [];
@@ -277,7 +294,7 @@ test.describe('Database Chat History Tests', function() {
     });
 
     // Test 4: Test session activity tracking
-    test('Session activity is updated when messages are added', function() {
+    t.test('Session activity is updated when messages are added', function() {
         var sessionId = db.createSession();
         testState.testSessions.push(sessionId);
 
@@ -290,7 +307,7 @@ test.describe('Database Chat History Tests', function() {
     });
 
     // Test 5: Test tool result reconstruction
-    test('Tool results are correctly reconstructed from database', function() {
+    t.test('Tool results are correctly reconstructed from database', function() {
         var sessionId = db.createSession();
         testState.testSessions.push(sessionId);
 
@@ -320,7 +337,7 @@ test.describe('Database Chat History Tests', function() {
     });
 
     // Test 6: Test multiple sessions with separate histories
-    test('Multiple sessions maintain separate conversation histories', function() {
+    t.test('Multiple sessions maintain separate conversation histories', function() {
         var session1 = db.createSession();
         var session2 = db.createSession();
         testState.testSessions.push(session1);
@@ -347,4 +364,7 @@ test.describe('Database Chat History Tests', function() {
         assert.notStrictEqual(history1[0].content, history2[0].content, 'Sessions should have different messages');
     });
 });
+
+// Export for test runner
+module.exports = testSuite;
 
