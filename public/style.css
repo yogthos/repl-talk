@@ -345,9 +345,46 @@ label {
     background: #1e1e1e;
     border: 1px solid #3a3a3c;
     border-radius: 4px;
-    padding: 1rem;
+    padding: 0;
     margin-bottom: 1rem;
+    overflow: hidden;
+    min-height: 200px;
+    max-height: 500px;
+    position: relative;
+}
+
+/* CodeMirror editor styling */
+.code-preview-card .code-display .cm-editor {
+    height: 100%;
+    width: 100%;
+    font-size: 14px;
+    line-height: 1.5;
+    background: #1e1e1e;
+    color: #d4d4d4;
+    font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+}
+
+.code-preview-card .code-display .cm-scroller {
+    overflow: auto;
+    min-height: 200px;
+    max-height: 500px;
+    height: 100%;
+}
+
+.code-preview-card .code-display .cm-content {
+    padding: 1rem;
+    min-height: 200px;
     overflow-x: auto;
+    outline: none;
+    caret-color: #d4d4d4;
+}
+
+.code-preview-card .code-display .cm-line {
+    padding: 0 0.5rem;
+}
+
+.code-preview-card .code-display .cm-focused {
+    outline: none;
 }
 
 .code-preview-card .code-display pre {

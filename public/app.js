@@ -669,16 +669,12 @@ function addCodePreviewCard(code, messageId) {
     // Card header
     var headerDiv = document.createElement('div');
     headerDiv.className = 'card-header';
-    headerDiv.innerHTML = '<span>📝</span><span>Generated Code - Review Before Execution</span>';
+    headerDiv.innerHTML = '<span>📝</span><span>Generated Code - Edit and Review Before Execution</span>';
 
-    // Code display
+    // Code display container for CodeMirror
     var codeDisplayDiv = document.createElement('div');
     codeDisplayDiv.className = 'code-display';
-    var pre = document.createElement('pre');
-    var codeEl = document.createElement('code');
-    codeEl.textContent = code;
-    pre.appendChild(codeEl);
-    codeDisplayDiv.appendChild(pre);
+    codeDisplayDiv.id = 'codemirror-container-' + messageId;
 
     // Actions
     var actionsDiv = document.createElement('div');
@@ -709,11 +705,195 @@ function addCodePreviewCard(code, messageId) {
     aiOutput.appendChild(cardDiv);
     aiOutput.scrollTop = aiOutput.scrollHeight;
 
-    pendingCodeExecution = { code: code, messageId: messageId, cardElement: cardDiv };
+    // Initialize pendingCodeExecution first
+    pendingCodeExecution = { code: code, messageId: messageId, cardElement: cardDiv, editor: null };
+
+    // Initialize CodeMirror editor
+    var editor = null;
+
+    function initCodeMirror() {
+        if (window.CodeMirror && window.CodeMirror.EditorView && window.CodeMirror.EditorState) {
+            try {
+                // Build extensions array
+                // NOTE: Keymap causes "multiple instances" error with CDN loading
+                // Editor will work for basic editing without keymap, but some shortcuts may not work
+                var extensions = [];
+
+                // Don't add keymap - it causes version conflicts
+                // The editor will still be editable via mouse and basic keyboard, just without advanced shortcuts
+
+                // Add Clojure mode if available, otherwise use plain text
+                if (window.CodeMirror.clojureMode) {
+                    extensions.push(window.CodeMirror.clojureMode);
+                    console.log('Using Clojure syntax highlighting');
+                } else {
+                    console.warn('Clojure mode not available, using plain text');
+                }
+
+                // Create EditorState first, then EditorView
+                // Ensure editor is editable (default is true, but be explicit)
+                var state = window.CodeMirror.EditorState.create({
+                    doc: code,
+                    extensions: extensions
+                });
+
+                editor = new window.CodeMirror.EditorView({
+                    state: state,
+                    parent: codeDisplayDiv
+                });
+
+                // Ensure the editor is focusable and editable
+                editor.contentDOM.setAttribute('contenteditable', 'true');
+                editor.contentDOM.setAttribute('spellcheck', 'false');
+
+                // Force focus to make it clear the editor is active
+                setTimeout(function() {
+                    editor.focus();
+                }, 100);
+
+                console.log('CodeMirror editor initialized successfully');
+
+                // Update pendingCodeExecution with editor instance
+                if (pendingCodeExecution) {
+                    pendingCodeExecution.editor = editor;
+                }
+            } catch (e) {
+                console.error('Failed to initialize CodeMirror:', e);
+                console.error('Error details:', e.message, e.stack);
+
+                // Try one more time without any extensions (in case extension caused the error)
+                try {
+                    console.log('Retrying with empty extensions...');
+                    codeDisplayDiv.innerHTML = ''; // Clear any partial content
+                    var state = window.CodeMirror.EditorState.create({
+                        doc: code,
+                        extensions: []
+                    });
+                    editor = new window.CodeMirror.EditorView({
+                        state: state,
+                        parent: codeDisplayDiv
+                    });
+                    editor.contentDOM.setAttribute('contenteditable', 'true');
+                    editor.contentDOM.setAttribute('spellcheck', 'false');
+                    if (pendingCodeExecution) {
+                        pendingCodeExecution.editor = editor;
+                    }
+                    console.log('CodeMirror editor initialized on retry');
+                } catch (e2) {
+                    console.error('Retry also failed:', e2);
+                    // Final fallback to plain text display
+                    var pre = document.createElement('pre');
+                    var codeEl = document.createElement('code');
+                    codeEl.textContent = code;
+                    pre.appendChild(codeEl);
+                    codeDisplayDiv.appendChild(pre);
+                }
+            }
+        } else {
+            // Fallback if CodeMirror not loaded
+            var missing = [];
+            if (!window.CodeMirror) missing.push('CodeMirror object');
+            if (!window.CodeMirror || !window.CodeMirror.EditorView) missing.push('EditorView');
+            if (!window.CodeMirror || !window.CodeMirror.EditorState) missing.push('EditorState');
+            console.warn('CodeMirror not available, missing:', missing.join(', '));
+            console.warn('Using plain text display');
+            var pre = document.createElement('pre');
+            var codeEl = document.createElement('code');
+            codeEl.textContent = code;
+            pre.appendChild(codeEl);
+            codeDisplayDiv.appendChild(pre);
+        }
+    }
+
+    // Try to initialize immediately, or wait for CodeMirror to load
+    function tryInit() {
+        if (window.CodeMirror && window.CodeMirror.EditorView && window.CodeMirror.EditorState) {
+            // Clear any existing content first
+            codeDisplayDiv.innerHTML = '';
+            initCodeMirror();
+            return true;
+        }
+        return false;
+    }
+
+    if (!tryInit()) {
+        // Wait for CodeMirror to load (module script loads asynchronously)
+        var attempts = 0;
+        var maxAttempts = 100; // 5 seconds at 50ms intervals
+        var checkInterval = setInterval(function() {
+            attempts++;
+            if (tryInit()) {
+                clearInterval(checkInterval);
+            } else if (attempts >= maxAttempts) {
+                clearInterval(checkInterval);
+                // Check if there's a pre element that should be replaced
+                var pre = codeDisplayDiv.querySelector('pre');
+                if (pre && window.CodeMirror && window.CodeMirror.EditorView && window.CodeMirror.EditorState) {
+                    // Try to replace pre with editor one last time
+                    try {
+                        var codeText = pre.querySelector('code') ? pre.querySelector('code').textContent : pre.textContent;
+                        codeDisplayDiv.innerHTML = '';
+                        var state = window.CodeMirror.EditorState.create({
+                            doc: codeText,
+                            extensions: []
+                        });
+                        editor = new window.CodeMirror.EditorView({
+                            state: state,
+                            parent: codeDisplayDiv
+                        });
+                        editor.contentDOM.setAttribute('contenteditable', 'true');
+                        editor.contentDOM.setAttribute('spellcheck', 'false');
+                        if (pendingCodeExecution) {
+                            pendingCodeExecution.editor = editor;
+                        }
+                        console.log('CodeMirror editor initialized in timeout handler');
+                    } catch (e) {
+                        console.error('Failed to initialize CodeMirror in timeout:', e);
+                        // Final fallback
+                        codeDisplayDiv.innerHTML = '';
+                        var preEl = document.createElement('pre');
+                        var codeEl = document.createElement('code');
+                        codeEl.textContent = code;
+                        preEl.appendChild(codeEl);
+                        codeDisplayDiv.appendChild(preEl);
+                    }
+                } else {
+                    console.error('CodeMirror failed to load after 5 seconds, using plain text display');
+                    // Clear container and add fallback
+                    codeDisplayDiv.innerHTML = '';
+                    var preEl = document.createElement('pre');
+                    var codeEl = document.createElement('code');
+                    codeEl.textContent = code;
+                    preEl.appendChild(codeEl);
+                    codeDisplayDiv.appendChild(preEl);
+                }
+            }
+        }, 50);
+    }
 }
 
 function approveCodeExecution(messageId) {
     if (!pendingCodeExecution || !isConnected) return;
+
+    // Get the edited code from CodeMirror if available
+    var codeToExecute = pendingCodeExecution.code;
+    if (pendingCodeExecution.editor) {
+        try {
+            codeToExecute = pendingCodeExecution.editor.state.doc.toString();
+            console.log('Using edited code from CodeMirror');
+        } catch (e) {
+            console.warn('Failed to get code from CodeMirror, using original:', e);
+        }
+    }
+
+    // Destroy CodeMirror editor if it exists
+    if (pendingCodeExecution.editor) {
+        try {
+            pendingCodeExecution.editor.destroy();
+        } catch (e) {
+            console.warn('Error destroying CodeMirror editor:', e);
+        }
+    }
 
     // Remove the code preview card
     if (pendingCodeExecution.cardElement) {
@@ -724,10 +904,11 @@ function approveCodeExecution(messageId) {
     removeAllStatusMessages();
     addStatusMessage('Executing code...', 'executing');
 
-    // Send approval message to server
+    // Send approval message to server with edited code
     ws.send(JSON.stringify({
         type: 'code_approved',
-        messageId: messageId
+        messageId: messageId,
+        code: codeToExecute
     }));
 
     pendingCodeExecution = null;
@@ -735,6 +916,15 @@ function approveCodeExecution(messageId) {
 
 function rejectCodeExecution(messageId) {
     if (!pendingCodeExecution || !isConnected) return;
+
+    // Destroy CodeMirror editor if it exists
+    if (pendingCodeExecution.editor) {
+        try {
+            pendingCodeExecution.editor.destroy();
+        } catch (e) {
+            console.warn('Error destroying CodeMirror editor:', e);
+        }
+    }
 
     // Remove the code preview card
     if (pendingCodeExecution.cardElement) {

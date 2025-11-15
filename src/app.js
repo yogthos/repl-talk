@@ -195,7 +195,7 @@ function evalClojure(codeString, callback) {
 /**
  * Handle code approval from user
  */
-function handleCodeApproval(messageId, ws) {
+function handleCodeApproval(messageId, editedCode, ws) {
     console.log('Code approved for message:', messageId);
 
     var pending = appState.pendingCodeExecutions[messageId];
@@ -205,11 +205,16 @@ function handleCodeApproval(messageId, ws) {
         return;
     }
 
-    // Execute the code
-    var code = pending.code;
+    // Use edited code if provided, otherwise fall back to original code
+    var code = editedCode || pending.code;
     var callback = pending.callback;
 
-    console.log('Executing approved code:', code);
+    if (editedCode && editedCode !== pending.code) {
+        console.log('Executing edited code (user modified):', code);
+        console.log('Original code was:', pending.code);
+    } else {
+        console.log('Executing approved code (original):', code);
+    }
 
     evalClojure(code, function(err, result) {
         // Clean up pending execution
@@ -408,7 +413,7 @@ function setupWebServer() {
                         handleUserMessage(data.message, data.model, ws);
                         break;
                     case 'code_approved':
-                        handleCodeApproval(data.messageId, ws);
+                        handleCodeApproval(data.messageId, data.code, ws);
                         break;
                     case 'code_rejected':
                         handleCodeRejection(data.messageId, ws);

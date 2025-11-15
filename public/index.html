@@ -50,6 +50,50 @@
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <!-- CodeMirror 6 -->
+    <script type="module">
+        // Import minimal core components to avoid version conflicts
+        import { EditorView, lineNumbers, keymap } from 'https://cdn.jsdelivr.net/npm/@codemirror/view@6.26.0/+esm';
+        import { EditorState } from 'https://cdn.jsdelivr.net/npm/@codemirror/state@6.4.0/+esm';
+        import { oneDark } from 'https://cdn.jsdelivr.net/npm/@codemirror/theme-one-dark@6.1.2/+esm';
+
+        // Set up CodeMirror immediately with core components
+        window.CodeMirror = {
+            EditorView: EditorView,
+            EditorState: EditorState,
+            oneDark: oneDark,
+            lineNumbers: lineNumbers,
+            keymap: keymap,
+            defaultKeymap: null, // Will be set when commands load
+            clojureMode: null // Will be set if we can load it
+        };
+
+        console.log('CodeMirror core loaded');
+
+        // Import commands for basic keyboard functionality (optional, editor works without it)
+        import('https://cdn.jsdelivr.net/npm/@codemirror/commands@6.3.0/+esm').then(commands => {
+            window.CodeMirror.defaultKeymap = commands.defaultKeymap;
+            console.log('CodeMirror keymap loaded');
+        }).catch(err => {
+            console.warn('Failed to load CodeMirror commands (editor will work but keyboard may be limited):', err);
+        });
+
+        // Try to load Clojure mode (optional)
+        import('https://cdn.jsdelivr.net/npm/@codemirror/legacy-modes@6.3.2/+esm').then(legacy => {
+            import('https://cdn.jsdelivr.net/npm/@codemirror/language@6.9.1/+esm').then(lang => {
+                if (legacy.clojure && lang.StreamLanguage) {
+                    window.CodeMirror.clojureMode = lang.StreamLanguage.define(legacy.clojure);
+                    console.log('Clojure mode loaded');
+                }
+            }).catch(() => {
+                console.log('Clojure mode not available, editor will work without syntax highlighting');
+            });
+        }).catch(() => {
+            console.log('Legacy modes not available, editor will work without Clojure syntax highlighting');
+        });
+
+        console.log('CodeMirror loaded successfully');
+    </script>
     <script src="app.js"></script>
 </body>
 </html>
