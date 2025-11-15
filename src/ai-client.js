@@ -50,8 +50,7 @@ function createAIClient(config, evalCallback, initialHistory, saveCallback, stat
         statusCallback: statusCallback || null,
         // Error recovery state
         inErrorRecovery: false,
-        iterationCount: 0,
-        maxIterations: 5 // Safety limit to prevent infinite loops
+        iterationCount: 0
     };
 
     /**
@@ -542,19 +541,6 @@ function createAIClient(config, evalCallback, initialHistory, saveCallback, stat
                             if (client.statusCallback) {
                                 client.statusCallback('AI is generating corrected code (attempt ' + client.iterationCount + ')...');
                             }
-                        }
-
-                        // Check iteration limit
-                        if (client.iterationCount > client.maxIterations) {
-                            var errorMsg = 'Maximum iteration limit (' + client.maxIterations + ') reached. Unable to fix the error.';
-                            console.error(errorMsg);
-                            if (client.statusCallback) {
-                                client.statusCallback(errorMsg);
-                            }
-                            client.inErrorRecovery = false;
-                            client.iterationCount = 0;
-                            callback(new Error(errorMsg), null);
-                            return;
                         }
                     } else {
                         // Success! Reset error recovery state

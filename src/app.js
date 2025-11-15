@@ -224,7 +224,7 @@ function handleCodeApproval(messageId, editedCode, ws) {
         if (result && result.type === 'error') {
             sendToClient(ws, {
                 type: 'status',
-                message: 'Code execution encountered an error. AI is analyzing and generating a fix...'
+                message: 'Code execution failed. AI is analyzing the error and generating a fix...'
             });
         }
 
