@@ -209,6 +209,17 @@ function createAIClient(config, evalCallback, initialHistory, saveCallback, stat
             // Call the eval callback (which will use nREPL)
             client.evalCallback(codeString, function(err, result) {
                 if (err) {
+                    // Check if this is a user cancellation (not a real execution error)
+                    var isUserCancellation = err.message && err.message.includes('cancelled by user');
+
+                    if (isUserCancellation) {
+                        // User cancelled - don't send tool response, just stop the conversation
+                        console.log('Code execution cancelled by user - stopping conversation');
+                        callback(new Error('USER_CANCELLED'), null);
+                        return;
+                    }
+
+                    // Real execution error - send tool response so AI can handle it
                     callback(null, {
                         role: 'tool',
                         tool_call_id: toolCall.id,
@@ -396,6 +407,25 @@ function createAIClient(config, evalCallback, initialHistory, saveCallback, stat
             message.tool_calls.forEach(function(toolCall) {
                 handleToolCall(toolCall, function(err, result) {
                     if (err) {
+                        // Check if this is a user cancellation
+                        if (err.message === 'USER_CANCELLED') {
+                            // User cancelled - remove the assistant message with tool_calls from history
+                            // and stop the conversation without calling continueConversation
+                            console.log('User cancelled code execution - removing assistant message and stopping');
+
+                            // Remove the last assistant message (the one with tool_calls that was just added)
+                            if (client.conversationHistory.length > 0 &&
+                                client.conversationHistory[client.conversationHistory.length - 1].role === 'assistant') {
+                                client.conversationHistory.pop();
+                            }
+
+                            // Call the main callback with a cancellation error
+                            // This will be handled by the caller to show a message to the user
+                            callback(new Error('Code execution cancelled by user'), null);
+                            return;
+                        }
+
+                        // Other errors - treat as fatal
                         hasError = true;
                         callback(err, null);
                         return;
