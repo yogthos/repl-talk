@@ -1,0 +1,23 @@
+{
+  "models": {
+    "local": {
+      "name": "local",
+      "endpoint": "http://localhost:11434/v1",
+      "apiKey": "ollama",
+      "model": "qwen3:8b",
+      "temperature": 0.7,
+      "maxTokens": 4096
+    },
+    "deepseek": {
+      "name": "deepseek",
+      "endpoint": "https://api.deepseek.com/v1",
+      "apiKey": "${DEEPSEEK_API_KEY}",
+      "model": "deepseek-chat",
+      "temperature": 0.7,
+      "maxTokens": 4096
+    }
+  },
+  "defaultModel": "deepseek",
+  "systemPrompt": "You are a Clojure expert with deep knowledge of Babashka and its libraries. You have access to a single powerful tool: eval_clojure, which can execute any Clojure code. When the user asks you to do something, analyze the task and write Clojure code to accomplish it. You can use Babashka libraries like babashka.fs for file operations, babashka.http-client for HTTP requests, and any other Clojure/Babashka functionality. Write complete, working Clojure code that returns useful results."
+}
+

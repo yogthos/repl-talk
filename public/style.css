@@ -1,0 +1,266 @@
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+    background: #1e1e1e;
+    color: #d4d4d4;
+    height: 100vh;
+    overflow: hidden;
+}
+
+.container {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+}
+
+header {
+    background: #252526;
+    padding: 1rem;
+    border-bottom: 1px solid #3e3e42;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+header h1 {
+    font-size: 1.5rem;
+    color: #4ec9b0;
+}
+
+.status-bar {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+}
+
+.status-indicator {
+    padding: 0.5rem 1rem;
+    border-radius: 4px;
+    font-size: 0.9rem;
+}
+
+.status-indicator.connected {
+    background: #4ec9b0;
+    color: #1e1e1e;
+}
+
+.status-indicator.disconnected {
+    background: #f48771;
+    color: #1e1e1e;
+}
+
+.main-content {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+}
+
+.left-panel {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    border-right: 1px solid #3e3e42;
+    overflow: hidden;
+}
+
+.right-panel {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.input-section, .output-section, .canvas-section {
+    padding: 1rem;
+    display: flex;
+    flex-direction: column;
+}
+
+.input-section {
+    border-bottom: 1px solid #3e3e42;
+    flex: 0 0 auto;
+}
+
+.output-section {
+    flex: 1;
+    overflow: hidden;
+}
+
+.canvas-section {
+    flex: 1;
+    overflow: hidden;
+}
+
+label {
+    font-size: 0.9rem;
+    color: #858585;
+    margin-bottom: 0.5rem;
+}
+
+#user-input {
+    width: 100%;
+    min-height: 100px;
+    padding: 0.75rem;
+    background: #1e1e1e;
+    border: 1px solid #3e3e42;
+    border-radius: 4px;
+    color: #d4d4d4;
+    font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+    font-size: 0.9rem;
+    resize: vertical;
+}
+
+#user-input:focus {
+    outline: none;
+    border-color: #4ec9b0;
+}
+
+.input-actions {
+    display: flex;
+    gap: 0.5rem;
+    margin-top: 0.5rem;
+    align-items: center;
+}
+
+.btn {
+    padding: 0.5rem 1rem;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.9rem;
+    transition: background 0.2s;
+}
+
+.btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.btn-primary {
+    background: #4ec9b0;
+    color: #1e1e1e;
+}
+
+.btn-primary:hover:not(:disabled) {
+    background: #3db89a;
+}
+
+.btn-secondary {
+    background: #3e3e42;
+    color: #d4d4d4;
+}
+
+.btn-secondary:hover:not(:disabled) {
+    background: #4a4a4f;
+}
+
+#model-select {
+    padding: 0.5rem;
+    background: #1e1e1e;
+    border: 1px solid #3e3e42;
+    border-radius: 4px;
+    color: #d4d4d4;
+    margin-left: auto;
+}
+
+.output-area {
+    flex: 1;
+    padding: 1rem;
+    background: #1e1e1e;
+    border: 1px solid #3e3e42;
+    border-radius: 4px;
+    overflow-y: auto;
+    font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+    font-size: 0.9rem;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+}
+
+.output-area .message {
+    margin-bottom: 1rem;
+    padding: 0.75rem;
+    background: #252526;
+    border-radius: 4px;
+    border-left: 3px solid #4ec9b0;
+}
+
+.output-area .message.error {
+    border-left-color: #f48771;
+}
+
+.output-area .message.user {
+    border-left-color: #569cd6;
+}
+
+.output-area .code-block {
+    background: #1e1e1e;
+    padding: 0.5rem;
+    border-radius: 4px;
+    margin: 0.5rem 0;
+    overflow-x: auto;
+}
+
+.canvas-container {
+    flex: 1;
+    background: #1e1e1e;
+    border: 1px solid #3e3e42;
+    border-radius: 4px;
+    overflow: auto;
+    padding: 1rem;
+}
+
+.canvas-placeholder {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    color: #858585;
+    font-style: italic;
+}
+
+.visualization {
+    width: 100%;
+    height: 100%;
+}
+
+.visualization table {
+    width: 100%;
+    border-collapse: collapse;
+    background: #252526;
+}
+
+.visualization table th,
+.visualization table td {
+    padding: 0.5rem;
+    border: 1px solid #3e3e42;
+    text-align: left;
+}
+
+.visualization table th {
+    background: #2d2d30;
+    color: #4ec9b0;
+    font-weight: 600;
+}
+
+.visualization .chart {
+    width: 100%;
+    height: 400px;
+}
+
+.visualization .json-view {
+    background: #252526;
+    padding: 1rem;
+    border-radius: 4px;
+    overflow-x: auto;
+}
+
+.visualization .json-view pre {
+    margin: 0;
+    color: #d4d4d4;
+}
+

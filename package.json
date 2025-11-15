@@ -1,0 +1,33 @@
+{
+    "name": "repl-chat",
+    "version": "0.1.0",
+    "description": "Interactive REPL interface with AI integration using Babashka nREPL",
+    "main": "src/app.js",
+    "scripts": {
+      "start": "node src/app.js",
+      "test": "node --test test/repl-loop.test.js"
+    },
+    "keywords": [
+      "Clojure",
+      "ClojureScript",
+      "nREPL",
+      "Babashka",
+      "AI",
+      "REPL",
+      "live programming"
+    ],
+    "author": "Robert Krahn",
+    "contributors": [
+      "Stuart Mitchell <stu@stuartmitchell.com>"
+    ],
+    "license": "MIT",
+    "dependencies": {
+      "bencode": "^2.0.3",
+      "tree-kill": "^1.2.2",
+      "express": "^4.18.2",
+      "ws": "^8.14.2"
+    },
+    "devDependencies": {
+      "async": "^3.2.6"
+    }
+  }

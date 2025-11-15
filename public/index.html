@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Babashka nREPL AI Tool</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Babashka nREPL AI Tool</h1>
+            <div class="status-bar">
+                <span id="connection-status" class="status-indicator">Disconnected</span>
+                <button id="connect-btn" class="btn btn-secondary">Connect</button>
+                <button id="disconnect-btn" class="btn btn-secondary" disabled>Disconnect</button>
+            </div>
+        </header>
+
+        <div class="main-content">
+            <div class="left-panel">
+                <div class="input-section">
+                    <label for="user-input">Enter your prompt:</label>
+                    <textarea id="user-input" placeholder="Ask the AI to do something..."></textarea>
+                    <div class="input-actions">
+                        <button id="send-btn" class="btn btn-primary" disabled>Send</button>
+                        <button id="clear-btn" class="btn btn-secondary">Clear</button>
+                        <select id="model-select">
+                            <option value="local">Local Model</option>
+                            <option value="deepseek">DeepSeek</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="output-section">
+                    <label>AI Response:</label>
+                    <div id="ai-output" class="output-area"></div>
+                </div>
+            </div>
+
+            <div class="right-panel">
+                <div class="canvas-section">
+                    <label>Visualization Canvas:</label>
+                    <div id="canvas-container" class="canvas-container">
+                        <div class="canvas-placeholder">Results will be visualized here</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
+
