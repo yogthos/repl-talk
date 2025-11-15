@@ -16,11 +16,35 @@ var sendBtn = document.getElementById('send-btn');
 var clearBtn = document.getElementById('clear-btn');
 var aiOutput = document.getElementById('ai-output');
 var canvasContainer = document.getElementById('canvas-container');
+var canvasIframe = document.getElementById('canvas-iframe');
 var modelSelect = document.getElementById('model-select');
 
 // State for status messages and code execution
 var activeStatusMessages = [];
 var pendingCodeExecution = null;
+
+/**
+ * Get the iframe document, initializing it if necessary
+ * Returns null if iframe is not available
+ */
+function getIframeDocument() {
+    if (!canvasIframe) {
+        console.error('Canvas iframe not found');
+        return null;
+    }
+
+    var iframeDoc = canvasIframe.contentDocument || canvasIframe.contentWindow.document;
+
+    // Initialize iframe document if it's empty or not ready
+    if (!iframeDoc || !iframeDoc.body) {
+        iframeDoc.open();
+        var placeholderHTML = '<div class="canvas-placeholder" style="display: flex; align-items: center; justify-content: center; height: 100%; color: #858585; font-style: italic;">Results will be visualized here</div>';
+        iframeDoc.write('<!DOCTYPE html><html><head><meta charset="UTF-8"><style>body { margin: 0; padding: 0; background: #1e1e1e; color: #d4d4d4; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, sans-serif; }</style></head><body>' + placeholderHTML + '</body></html>');
+        iframeDoc.close();
+    }
+
+    return iframeDoc;
+}
 
 // Connect to WebSocket server
 function connect() {
@@ -141,20 +165,27 @@ function addOutputMessage(text, type) {
 }
 
 function visualizeResult(result) {
+    // Get iframe document
+    var iframeDoc = getIframeDocument();
+    if (!iframeDoc) {
+        console.error('Cannot access iframe document');
+        return;
+    }
+
     // Clear previous visualization
-    canvasContainer.innerHTML = '';
+    iframeDoc.body.innerHTML = '';
 
     if (!result || result.error) {
-        var errorDiv = document.createElement('div');
+        var errorDiv = iframeDoc.createElement('div');
         errorDiv.className = 'visualization';
         errorDiv.innerHTML = '<div style="color: #f48771; padding: 1rem;">Error: ' +
                             (result.error || 'Unknown error') + '</div>';
-        canvasContainer.appendChild(errorDiv);
+        iframeDoc.body.appendChild(errorDiv);
         return;
     }
 
     var type = result.type || 'unknown';
-    var vizDiv = document.createElement('div');
+    var vizDiv = iframeDoc.createElement('div');
     vizDiv.className = 'visualization';
 
     console.log('visualizeResult - type:', type, 'result:', result);
@@ -165,14 +196,14 @@ function visualizeResult(result) {
         var htmlContent = result.html || result.data || result.content;
         console.log('HTML content to render:', htmlContent ? htmlContent.substring(0, 200) + '...' : 'none');
         if (htmlContent) {
-            renderHTML(vizDiv, htmlContent);
+            renderHTML(vizDiv, htmlContent, iframeDoc);
         } else {
             // Fallback: try to extract from value if it's a string
             var data = result.value;
             if (typeof data === 'string' && data.trim().startsWith('<')) {
-                renderHTML(vizDiv, data);
+                renderHTML(vizDiv, data, iframeDoc);
             } else {
-                renderJSON(vizDiv, result);
+                renderJSON(vizDiv, result, iframeDoc);
             }
         }
     } else {
@@ -180,28 +211,28 @@ function visualizeResult(result) {
         var data = result.value;
         switch (type) {
             case 'table-data':
-                renderTable(vizDiv, data);
+                renderTable(vizDiv, data, iframeDoc);
                 break;
             case 'chart-data':
-                renderChart(vizDiv, data);
+                renderChart(vizDiv, data, iframeDoc);
                 break;
             case 'map':
-                renderMap(vizDiv, data);
+                renderMap(vizDiv, data, iframeDoc);
                 break;
             case 'list':
-                renderList(vizDiv, data);
+                renderList(vizDiv, data, iframeDoc);
                 break;
             case 'string':
             case 'number':
             case 'boolean':
-                renderSimple(vizDiv, data);
+                renderSimple(vizDiv, data, iframeDoc);
                 break;
             default:
-                renderJSON(vizDiv, result);
+                renderJSON(vizDiv, result, iframeDoc);
         }
     }
 
-    canvasContainer.appendChild(vizDiv);
+    iframeDoc.body.appendChild(vizDiv);
 }
 
 /**
@@ -347,7 +378,7 @@ function extractHTML(content) {
  * Render HTML content in the canvas
  * Handles both HTML and markdown content
  */
-function renderHTML(container, htmlContent) {
+function renderHTML(container, htmlContent, iframeDoc) {
     console.log('renderHTML called with content length:', htmlContent ? htmlContent.length : 0);
     console.log('renderHTML first 500 chars:', htmlContent ? htmlContent.substring(0, 500) : 'empty');
 
@@ -366,7 +397,7 @@ function renderHTML(container, htmlContent) {
     // If it's a full HTML document, extract the body content
     if (isFullDocument) {
         // Parse the HTML and extract body content
-        var tempDiv = document.createElement('div');
+        var tempDiv = iframeDoc.createElement('div');
         tempDiv.innerHTML = htmlContent;
 
         // Try to find body element
@@ -407,7 +438,7 @@ function renderHTML(container, htmlContent) {
     }
 
     // Create a wrapper div for the HTML content
-    var htmlDiv = document.createElement('div');
+    var htmlDiv = iframeDoc.createElement('div');
     htmlDiv.className = 'html-content';
 
     // For full documents, don't add extra padding - let the document control its own layout
@@ -427,27 +458,27 @@ function renderHTML(container, htmlContent) {
     container.appendChild(htmlDiv);
 }
 
-function renderTable(container, data) {
-    var table = document.createElement('table');
+function renderTable(container, data, iframeDoc) {
+    var table = iframeDoc.createElement('table');
 
     if (Array.isArray(data) && data.length > 0) {
         // Array of objects
         var headers = Object.keys(data[0]);
-        var thead = document.createElement('thead');
-        var headerRow = document.createElement('tr');
+        var thead = iframeDoc.createElement('thead');
+        var headerRow = iframeDoc.createElement('tr');
         headers.forEach(function(h) {
-            var th = document.createElement('th');
+            var th = iframeDoc.createElement('th');
             th.textContent = h;
             headerRow.appendChild(th);
         });
         thead.appendChild(headerRow);
         table.appendChild(thead);
 
-        var tbody = document.createElement('tbody');
+        var tbody = iframeDoc.createElement('tbody');
         data.forEach(function(row) {
-            var tr = document.createElement('tr');
+            var tr = iframeDoc.createElement('tr');
             headers.forEach(function(h) {
-                var td = document.createElement('td');
+                var td = iframeDoc.createElement('td');
                 td.textContent = String(row[h] || '');
                 tr.appendChild(td);
             });
@@ -456,23 +487,23 @@ function renderTable(container, data) {
         table.appendChild(tbody);
     } else if (typeof data === 'object') {
         // Single object as table
-        var thead = document.createElement('thead');
-        var headerRow = document.createElement('tr');
-        var th1 = document.createElement('th');
+        var thead = iframeDoc.createElement('thead');
+        var headerRow = iframeDoc.createElement('tr');
+        var th1 = iframeDoc.createElement('th');
         th1.textContent = 'Key';
-        var th2 = document.createElement('th');
+        var th2 = iframeDoc.createElement('th');
         th2.textContent = 'Value';
         headerRow.appendChild(th1);
         headerRow.appendChild(th2);
         thead.appendChild(headerRow);
         table.appendChild(thead);
 
-        var tbody = document.createElement('tbody');
+        var tbody = iframeDoc.createElement('tbody');
         Object.keys(data).forEach(function(key) {
-            var tr = document.createElement('tr');
-            var td1 = document.createElement('td');
+            var tr = iframeDoc.createElement('tr');
+            var td1 = iframeDoc.createElement('td');
             td1.textContent = key;
-            var td2 = document.createElement('td');
+            var td2 = iframeDoc.createElement('td');
             td2.textContent = String(data[key]);
             tr.appendChild(td1);
             tr.appendChild(td2);
@@ -484,10 +515,10 @@ function renderTable(container, data) {
     container.appendChild(table);
 }
 
-function renderChart(container, data) {
+function renderChart(container, data, iframeDoc) {
     // Simple text-based chart representation
     // For production, integrate a charting library like Chart.js
-    var chartDiv = document.createElement('div');
+    var chartDiv = iframeDoc.createElement('div');
     chartDiv.className = 'chart';
     chartDiv.style.padding = '1rem';
 
@@ -503,7 +534,7 @@ function renderChart(container, data) {
             chartText += '[' + i + '] ' + bar + ' ' + val + '\n';
         });
 
-        var pre = document.createElement('pre');
+        var pre = iframeDoc.createElement('pre');
         pre.textContent = chartText;
         pre.style.fontFamily = 'monospace';
         pre.style.whiteSpace = 'pre';
@@ -515,17 +546,17 @@ function renderChart(container, data) {
     container.appendChild(chartDiv);
 }
 
-function renderMap(container, data) {
-    renderTable(container, data);
+function renderMap(container, data, iframeDoc) {
+    renderTable(container, data, iframeDoc);
 }
 
-function renderList(container, data) {
+function renderList(container, data, iframeDoc) {
     if (Array.isArray(data)) {
-        var ul = document.createElement('ul');
+        var ul = iframeDoc.createElement('ul');
         ul.style.listStyle = 'none';
         ul.style.padding = '0';
         data.forEach(function(item) {
-            var li = document.createElement('li');
+            var li = iframeDoc.createElement('li');
             li.style.padding = '0.5rem';
             li.style.borderBottom = '1px solid #3e3e42';
             li.textContent = String(item);
@@ -533,22 +564,22 @@ function renderList(container, data) {
         });
         container.appendChild(ul);
     } else {
-        renderSimple(container, data);
+        renderSimple(container, data, iframeDoc);
     }
 }
 
-function renderSimple(container, data) {
-    var div = document.createElement('div');
+function renderSimple(container, data, iframeDoc) {
+    var div = iframeDoc.createElement('div');
     div.style.padding = '1rem';
     div.style.fontSize = '1.2rem';
     div.textContent = String(data);
     container.appendChild(div);
 }
 
-function renderJSON(container, result) {
-    var jsonDiv = document.createElement('div');
+function renderJSON(container, result, iframeDoc) {
+    var jsonDiv = iframeDoc.createElement('div');
     jsonDiv.className = 'json-view';
-    var pre = document.createElement('pre');
+    var pre = iframeDoc.createElement('pre');
     pre.textContent = JSON.stringify(result, null, 2);
     jsonDiv.appendChild(pre);
     container.appendChild(jsonDiv);
@@ -729,7 +760,10 @@ disconnectBtn.addEventListener('click', disconnect);
 sendBtn.addEventListener('click', sendMessage);
 clearBtn.addEventListener('click', function() {
     aiOutput.innerHTML = '';
-    canvasContainer.innerHTML = '<div class="canvas-placeholder">Results will be visualized here</div>';
+    var iframeDoc = getIframeDocument();
+    if (iframeDoc) {
+        iframeDoc.body.innerHTML = '<div class="canvas-placeholder" style="display: flex; align-items: center; justify-content: center; height: 100%; color: #858585; font-style: italic;">Results will be visualized here</div>';
+    }
     activeStatusMessages = [];
     pendingCodeExecution = null;
 });
@@ -759,6 +793,14 @@ document.addEventListener('keydown', function(e) {
 
 // Auto-connect on load
 window.addEventListener('load', function() {
+    // Initialize iframe document when iframe is ready
+    if (canvasIframe) {
+        canvasIframe.addEventListener('load', function() {
+            getIframeDocument();
+        });
+        // Try to initialize immediately (in case iframe is already loaded)
+        getIframeDocument();
+    }
     connect();
 });
 

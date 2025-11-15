@@ -383,7 +383,8 @@ function createAIClient(config, evalCallback, initialHistory, saveCallback, stat
                 console.log('Suppressing intermediate response during error recovery:', message.content.substring(0, 100));
                 // Don't add commentary to history - just the tool calls
                 // Update the assistant message to remove commentary
-                assistantMsg.content = null; // Clear commentary, keep tool_calls
+                // Some APIs don't accept null content, so use empty string instead
+                assistantMsg.content = ''; // Clear commentary, keep tool_calls
                 // Update in history
                 client.conversationHistory[client.conversationHistory.length - 1] = assistantMsg;
             }
@@ -398,6 +399,50 @@ function createAIClient(config, evalCallback, initialHistory, saveCallback, stat
                         hasError = true;
                         callback(err, null);
                         return;
+                    }
+
+                    // Validate tool message before adding to history
+                    if (!result || !result.role || result.role !== 'tool') {
+                        console.error('Invalid tool result:', result);
+                        hasError = true;
+                        callback(new Error('Invalid tool result format'), null);
+                        return;
+                    }
+
+                    if (!result.tool_call_id) {
+                        console.error('Tool result missing tool_call_id:', result);
+                        hasError = true;
+                        callback(new Error('Tool result missing tool_call_id'), null);
+                        return;
+                    }
+
+                    // Verify there's a corresponding assistant message with tool_calls
+                    var lastAssistantMsg = null;
+                    for (var i = client.conversationHistory.length - 1; i >= 0; i--) {
+                        if (client.conversationHistory[i].role === 'assistant') {
+                            lastAssistantMsg = client.conversationHistory[i];
+                            break;
+                        }
+                    }
+
+                    if (!lastAssistantMsg || !lastAssistantMsg.tool_calls ||
+                        !lastAssistantMsg.tool_calls.some(function(tc) { return tc.id === result.tool_call_id; })) {
+                        console.error('Tool message does not correspond to any assistant message with tool_calls');
+                        hasError = true;
+                        callback(new Error('Tool message sequencing error'), null);
+                        return;
+                    }
+
+                    // Validate tool response content is valid JSON
+                    if (result.content) {
+                        try {
+                            JSON.parse(result.content);
+                        } catch (e) {
+                            console.error('Tool response content is not valid JSON:', result.content);
+                            hasError = true;
+                            callback(new Error('Tool response content is not valid JSON: ' + e.message), null);
+                            return;
+                        }
                     }
 
                     toolResults.push(result);
@@ -527,9 +572,29 @@ function createAIClient(config, evalCallback, initialHistory, saveCallback, stat
         // Sanitize history before sending to API to ensure valid message sequence
         var sanitizedHistory = sanitizeHistory(client.conversationHistory);
 
+        // Prepare messages with system prompt from config (same as sendMessage)
+        var messages = [
+            {
+                role: 'system',
+                content: client.config.ai.systemPrompt
+            }
+        ].concat(sanitizedHistory);
+
+        // Log the message sequence for debugging
+        console.log('continueConversation: sending', messages.length, 'messages to API');
+        messages.forEach(function(msg, idx) {
+            if (msg.role === 'assistant' && msg.tool_calls) {
+                console.log('  [' + idx + '] assistant with', msg.tool_calls.length, 'tool_calls, content:', msg.content ? 'present' : 'null/empty');
+            } else if (msg.role === 'tool') {
+                console.log('  [' + idx + '] tool, tool_call_id:', msg.tool_call_id);
+            } else {
+                console.log('  [' + idx + ']', msg.role, msg.content ? 'content present' : 'no content');
+            }
+        });
+
         var requestBody = {
             model: endpointInfo.model,
-            messages: sanitizedHistory,
+            messages: messages,
             tools: [evalTool], // Include tools so AI can continue making tool calls during error recovery
             tool_choice: 'auto',
             temperature: endpointInfo.temperature,

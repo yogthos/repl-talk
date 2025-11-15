@@ -210,8 +210,15 @@ label {
     background: #1e1e1e;
     border: 1px solid #3e3e42;
     border-radius: 4px;
-    overflow: auto;
-    padding: 1rem;
+    overflow: hidden;
+    position: relative;
+}
+
+.canvas-iframe {
+    width: 100%;
+    height: 100%;
+    border: none;
+    display: block;
 }
 
 .canvas-placeholder {

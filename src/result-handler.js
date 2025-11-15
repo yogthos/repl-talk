@@ -121,6 +121,7 @@ function serializeResult(nreplMessages) {
     // nREPL returns values as strings, so we need to parse them
     var parsedValue = null;
     var parseError = null;
+    var useRawValue = false;
 
     if (value !== null && value !== undefined) {
         try {
@@ -129,8 +130,15 @@ function serializeResult(nreplMessages) {
         } catch (e1) {
             try {
                 // Try to parse as Clojure EDN-like structure
-                // This is a simplified parser - for production, use a proper EDN parser
                 parsedValue = parseClojureValue(value);
+
+                // Validate the parsed result - check if it's clearly malformed
+                if (!isValidParsedResult(parsedValue, value)) {
+                    console.warn('Parsed result appears malformed, falling back to raw value');
+                    useRawValue = true;
+                    parsedValue = value;
+                    parseError = 'Parsing produced malformed result';
+                }
             } catch (e2) {
                 // If parsing fails, treat as string
                 parsedValue = value;
@@ -140,7 +148,8 @@ function serializeResult(nreplMessages) {
     }
 
     // Determine result type for visualization
-    var resultType = determineType(parsedValue);
+    // If we're using raw value, treat it as a string
+    var resultType = useRawValue ? 'string' : determineType(parsedValue);
 
     return {
         value: parsedValue,
@@ -152,11 +161,66 @@ function serializeResult(nreplMessages) {
 }
 
 /**
- * Simple Clojure value parser (handles basic structures)
- * For production, consider using a proper EDN parser library
+ * Validate that a parsed result is not clearly malformed
+ * Returns false if the result appears to be a parsing failure
+ */
+function isValidParsedResult(parsed, raw) {
+    if (typeof parsed === 'string') {
+        // If raw value looks like a complex structure but parsed is just a string,
+        // it might be a parsing failure
+        var rawTrimmed = raw.trim();
+        if ((rawTrimmed.startsWith('[') || rawTrimmed.startsWith('{') || rawTrimmed.startsWith('(')) &&
+            !rawTrimmed.startsWith('"')) {
+            // Raw looks like a collection but parsed is a string - likely malformed
+            return false;
+        }
+        return true;
+    }
+
+    if (Array.isArray(parsed)) {
+        // Check if array contains string fragments that look like parsing failures
+        // e.g., ['{:name', '".cursor",', ':size'] instead of [{name: '.cursor', size: ...}]
+        if (parsed.length > 0) {
+            var firstItem = parsed[0];
+            // If first item is a string that looks like a fragment of a map/vector
+            if (typeof firstItem === 'string') {
+                // Check for common patterns that indicate parsing failure
+                if (firstItem.startsWith('{') || firstItem.startsWith('[') ||
+                    firstItem.startsWith(':') && firstItem.length < 50) {
+                    // Check if raw value suggests this should be objects, not strings
+                    var rawTrimmed = raw.trim();
+                    if (rawTrimmed.startsWith('[') && rawTrimmed.includes('{:') &&
+                        parsed.every(function(item) { return typeof item === 'string'; })) {
+                        // Array of strings when we expect objects - likely malformed
+                        return false;
+                    }
+                }
+            }
+        }
+        return true;
+    }
+
+    if (typeof parsed === 'object' && parsed !== null) {
+        // Check if object is empty when raw suggests it should have content
+        var keys = Object.keys(parsed);
+        var rawTrimmed = raw.trim();
+        if (keys.length === 0 && rawTrimmed.startsWith('{') && rawTrimmed.length > 2) {
+            // Empty object when raw suggests content - might be malformed
+            return false;
+        }
+        return true;
+    }
+
+    return true;
+}
+
+/**
+ * Parse Clojure EDN-like value with proper bracket/brace awareness
+ * Handles nested structures (vectors, lists, maps)
  */
 function parseClojureValue(str) {
     str = str.trim();
+    if (str === '') return str;
 
     // Try to detect and parse common Clojure structures
     if (str === 'nil') return null;
@@ -171,25 +235,14 @@ function parseClojureValue(str) {
         return parseFloat(str);
     }
 
-    // Try to parse as vector/list (starts with [ or ( and ends with ] or ))
-    if ((str.startsWith('[') && str.endsWith(']')) ||
-        (str.startsWith('(') && str.endsWith(')'))) {
-        // Simple list parsing - split by whitespace and commas
-        var inner = str.slice(1, -1).trim();
-        if (inner === '') return [];
-        // This is very basic - a real parser would handle nested structures
-        var items = inner.split(/\s+/).filter(function(s) { return s.length > 0; });
-        return items.map(parseClojureValue);
-    }
-
-    // Try to parse as map (starts with { and ends with })
-    if (str.startsWith('{') && str.endsWith('}')) {
-        var inner = str.slice(1, -1).trim();
-        if (inner === '') return {};
-        // Very basic map parsing - real parser needed for production
-        var map = {};
-        // This is simplified - proper EDN parser needed
-        return map;
+    // Try to parse as string (starts and ends with ")
+    if (str.startsWith('"') && str.endsWith('"')) {
+        try {
+            return JSON.parse(str); // JSON strings are compatible
+        } catch (e) {
+            // If JSON parsing fails, return the string without quotes
+            return str.slice(1, -1);
+        }
     }
 
     // Try to parse as keyword (starts with :)
@@ -197,13 +250,186 @@ function parseClojureValue(str) {
         return str;
     }
 
-    // Try to parse as string (starts and ends with ")
-    if (str.startsWith('"') && str.endsWith('"')) {
-        return JSON.parse(str); // JSON strings are compatible
+    // Try to parse as vector (starts with [ and ends with ])
+    if (str.startsWith('[') && str.endsWith(']')) {
+        return parseCollection(str, '[', ']');
+    }
+
+    // Try to parse as list (starts with ( and ends with ))
+    if (str.startsWith('(') && str.endsWith(')')) {
+        return parseCollection(str, '(', ')');
+    }
+
+    // Try to parse as map (starts with { and ends with })
+    if (str.startsWith('{') && str.endsWith('}')) {
+        return parseMap(str);
     }
 
     // Default: return as string
     return str;
+}
+
+/**
+ * Parse a collection (vector or list) with proper bracket matching
+ */
+function parseCollection(str, openChar, closeChar) {
+    var inner = str.slice(1, -1).trim();
+    if (inner === '') return [];
+
+    var items = [];
+    var current = '';
+    var depth = 0;
+    var inString = false;
+    var escapeNext = false;
+
+    for (var i = 0; i < inner.length; i++) {
+        var char = inner[i];
+        var prevChar = i > 0 ? inner[i - 1] : '';
+
+        if (escapeNext) {
+            current += char;
+            escapeNext = false;
+            continue;
+        }
+
+        if (char === '\\') {
+            current += char;
+            escapeNext = true;
+            continue;
+        }
+
+        if (char === '"' && prevChar !== '\\') {
+            inString = !inString;
+            current += char;
+            continue;
+        }
+
+        if (inString) {
+            current += char;
+            continue;
+        }
+
+        // Track depth for nested structures
+        if (char === '[' || char === '(' || char === '{') {
+            depth++;
+            current += char;
+        } else if (char === ']' || char === ')' || char === '}') {
+            depth--;
+            current += char;
+        } else if (depth === 0 && (char === ' ' || char === '\n' || char === '\t')) {
+            // Only split on whitespace when at top level
+            if (current.trim()) {
+                items.push(current.trim());
+                current = '';
+            }
+        } else {
+            current += char;
+        }
+    }
+
+    // Add the last item if any
+    if (current.trim()) {
+        items.push(current.trim());
+    }
+
+    return items.map(parseClojureValue);
+}
+
+/**
+ * Parse a map with proper brace matching
+ */
+function parseMap(str) {
+    var inner = str.slice(1, -1).trim();
+    if (inner === '') return {};
+
+    var map = {};
+    var current = '';
+    var depth = 0;
+    var inString = false;
+    var escapeNext = false;
+    var key = null;
+    var keyStart = 0;
+
+    for (var i = 0; i < inner.length; i++) {
+        var char = inner[i];
+        var prevChar = i > 0 ? inner[i - 1] : '';
+
+        if (escapeNext) {
+            current += char;
+            escapeNext = false;
+            continue;
+        }
+
+        if (char === '\\') {
+            current += char;
+            escapeNext = true;
+            continue;
+        }
+
+        if (char === '"' && prevChar !== '\\') {
+            inString = !inString;
+            current += char;
+            continue;
+        }
+
+        if (inString) {
+            current += char;
+            continue;
+        }
+
+        // Track depth for nested structures
+        if (char === '[' || char === '(' || char === '{') {
+            depth++;
+            current += char;
+        } else if (char === ']' || char === ')' || char === '}') {
+            depth--;
+            current += char;
+        } else if (depth === 0) {
+            if (char === ' ' || char === '\n' || char === '\t' || char === ',') {
+                // Whitespace or comma at top level
+                if (current.trim()) {
+                    if (key === null) {
+                        // This is a key
+                        key = current.trim();
+                        current = '';
+                    } else {
+                        // This is a value
+                        var parsedKey = parseClojureValue(key);
+                        var parsedValue = parseClojureValue(current.trim());
+                        // Convert keyword to string key
+                        var mapKey = typeof parsedKey === 'string' && parsedKey.startsWith(':')
+                            ? parsedKey.slice(1)
+                            : String(parsedKey);
+                        map[mapKey] = parsedValue;
+                        key = null;
+                        current = '';
+                    }
+                }
+            } else {
+                current += char;
+            }
+        } else {
+            current += char;
+        }
+    }
+
+    // Handle the last key-value pair
+    if (current.trim()) {
+        if (key === null) {
+            // Odd number of elements - malformed map, return empty
+            console.warn('Malformed map: odd number of elements');
+            return {};
+        } else {
+            var parsedKey = parseClojureValue(key);
+            var parsedValue = parseClojureValue(current.trim());
+            var mapKey = typeof parsedKey === 'string' && parsedKey.startsWith(':')
+                ? parsedKey.slice(1)
+                : String(parsedKey);
+            map[mapKey] = parsedValue;
+        }
+    }
+
+    return map;
 }
 
 /**
